@@ -8,7 +8,7 @@ using UnityEngine;
 
 namespace Hai.Basis.CilboxPencil
 {
-    // [Cilboxable]
+    [Cilboxable]
     public class Pencil : MonoBehaviour
     {
         private const float CommitThresholdDistance = 0.005f;
@@ -43,6 +43,10 @@ namespace Hai.Basis.CilboxPencil
 
         private bool _isEnabled;
         private bool _hasPreviousPoint;
+
+        // General
+        private float _pickupTime;
+        private bool _isMisclick;
         private Vector3 _previouslyCommittedPoint;
 
         // Framerate Interpolation
@@ -58,6 +62,7 @@ namespace Hai.Basis.CilboxPencil
         private readonly List<ushort> _currentTris = new();
         private Vector3 _boundsMin;
         private Vector3 _boundsMax;
+        private ushort _nextVert;
 
         private MeshRenderer _holderMeshRenderer;
 
@@ -72,12 +77,12 @@ namespace Hai.Basis.CilboxPencil
         private BasisNetworkShim _network;
         private bool _needsNetworkUpdate;
         private bool _isNetworkReady;
-        private float _pickupTime;
-        private bool _isMisclick;
-        private ushort _nextVert;
         private Vector3[] _points = new Vector3[10];
         private Quaternion[] _quats = new Quaternion[10];
         private int _memoryLength = 0;
+        // private int _numberOfGroups;
+        // private Dictionary<int, List<Vector3>> _groupToNetworkedPoints = new();
+        // private Dictionary<int, List<Quaternion>> _groupToNetworkedQuats = new();
 
         //
 
@@ -201,7 +206,11 @@ namespace Hai.Basis.CilboxPencil
                     var direction1 = (previous - current) * 0.25f;
                     // var direction1 = (previous + direction0) - current;
                     // var direction1 = Vector3.zero;
-                    PrepareSeilerInterpolation(previous, current, direction0, direction1, out var b0, out var b3, out var s1, out var s2);
+                    PrepareSeilerInterpolation(previous, current, direction0, direction1);
+                    var b0 = PrepareSeilerInterpolation_result[0];
+                    var b3 = PrepareSeilerInterpolation_result[1];
+                    var s1 = PrepareSeilerInterpolation_result[2];
+                    var s2 = PrepareSeilerInterpolation_result[3];
                     var quatFrom = _previouslyCommittedQuat;
 
                     var k = 1;
@@ -380,20 +389,25 @@ namespace Hai.Basis.CilboxPencil
             return new Bounds(_boundsMin + (_boundsMax - _boundsMin) * 0.5f, _boundsMax - _boundsMin);
         }
 
-        private void PrepareSeilerInterpolation(Vector3 pos0, Vector3 pos1, Vector3 direction0, Vector3 direction1, out Vector3 b0, out Vector3 b3, out Vector3 s1, out Vector3 s2)
+        private Vector3[] PrepareSeilerInterpolation_result = new Vector3[4]; // CILBOX: Cilbox doesn't accept "out var" nor "tuple" return values at this time of writing.
+        private void PrepareSeilerInterpolation(Vector3 pos0, Vector3 pos1, Vector3 direction0, Vector3 direction1)
         {
-            b0 = pos0;
-            b3 = pos1;
+            var b0 = pos0;
+            var b3 = pos1;
             var b1 = b0 + direction0;
             var b2 = b3 + direction1;
 
-            FromBezierToSeiler(b0, b1, b2, b3, out s1, out s2);
+            FromBezierToSeiler(b0, b1, b2, b3);
+            PrepareSeilerInterpolation_result[0] = b0;
+            PrepareSeilerInterpolation_result[1] = b3;
         }
 
-        private void FromBezierToSeiler(Vector3 b0, Vector3 b1, Vector3 b2, Vector3 b3, out Vector3 s1, out Vector3 s2)
+        private void FromBezierToSeiler(Vector3 b0, Vector3 b1, Vector3 b2, Vector3 b3)
         {
-            s1 = 3 * b1 - b0 - b3;
-            s2 = 3 * b2 - b3 - b0;
+            var s1 = 3 * b1 - b0 - b3;
+            var s2 = 3 * b2 - b3 - b0;
+            PrepareSeilerInterpolation_result[2] = s1;
+            PrepareSeilerInterpolation_result[3] = s2;
         }
 
         /// Based on https://www.cemyuksel.com/research/seilers_interpolation/
