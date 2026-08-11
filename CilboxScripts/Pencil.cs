@@ -4,11 +4,12 @@ using Basis;
 using Basis.Network.Core;
 using Basis.Scripts.BasisSdk.Interactions;
 using Basis.Scripts.Device_Management.Devices;
+using Basis.Scripts.Drivers;
 using UnityEngine;
 
 namespace Hai.Basis.CilboxPencil
 {
-    [Cilboxable]
+    // [Cilboxable]
     public class Pencil : MonoBehaviour
     {
         private const float CommitThresholdDistance = 0.005f;
@@ -27,11 +28,16 @@ namespace Hai.Basis.CilboxPencil
         private const float PressingOnColliderRaycastMagnetismDistance = 0.002f;
         private const float PressingOnColliderNormalBackawayDistance = 0.0001f;
 
+        // ForcedPerspective mode
+        private const int ForcedPerspectiveRaycastMask = ~((1 << 2) | (1 << 3) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 10) | (1 << 11));
+
         // Networking
         private const int CapacityIncrease = 200;
         private readonly Vector3 TerminationMagicVector = new(0, -10_000, 0);
 
         //
+
+        public bool option_UseForcedPerspectiveRaycast = false;
 
         public BasisPickupInteractable pickup;
         public Transform tip;
@@ -43,11 +49,12 @@ namespace Hai.Basis.CilboxPencil
         public MeshRenderer instantiateMe_Renderer;
 
         private bool _isEnabled;
-        private bool _hasPreviousPoint;
 
         // General
+        private float _defaultTipScale;
         private float _pickupTime;
         private bool _isMisclick;
+        private bool _hasPreviousPoint;
         private Vector3 _previouslyCommittedPoint;
         private List<Vector3> _colinearTestHistory = new();
 
@@ -74,6 +81,9 @@ namespace Hai.Basis.CilboxPencil
         private bool _isPressingOnCollider;
         private Quaternion _lastPressingOnColliderRotation;
         private Vector3 _lastPressingOnColliderPosition;
+
+        // ForcedPerspective mode
+        private bool _isPaintingForcedPerspective;
 
         // Networking
         private BasisNetworkShim _network;
@@ -104,7 +114,8 @@ namespace Hai.Basis.CilboxPencil
             _network.NetworkReady += WhenNetworkReady;
             _network.NetworkMessageReceived += WhenNetworkMessageReceived;
 
-            _tipScale = tip.lossyScale.x;
+            _defaultTipScale = tip.lossyScale.x;
+            _tipScale = _defaultTipScale;
 
             transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
         }
@@ -132,8 +143,8 @@ namespace Hai.Basis.CilboxPencil
                 if (Physics.Raycast(raycastPos, tip.forward, out var hitInfo, PressingOnColliderRaycastBackingDistance + PressingOnColliderRaycastMagnetismDistance, PressingOnColliderRaycastMask))
                 {
                     modelMover.position = hitInfo.point;
-                    _lastPressingOnColliderRotation = Quaternion.LookRotation(-hitInfo.normal, tip.up);
-                    _lastPressingOnColliderPosition = hitInfo.point + hitInfo.normal * PressingOnColliderNormalBackawayDistance;
+                    _lastPressingOnColliderRotation = RotationOnSurface(hitInfo);
+                    _lastPressingOnColliderPosition = PositionOnSurface(hitInfo);
                     _isPressingOnCollider = true;
                     StartOrContinue(_lastPressingOnColliderPosition, _lastPressingOnColliderRotation);
                 }
@@ -174,14 +185,49 @@ namespace Hai.Basis.CilboxPencil
                 {
                     _cannotExecutePressingOnCollider = true;
                     _isPressingOnCollider = false;
-                    StartOrContinue(tip.position, tip.rotation);
+
+                    bool isForcedPerspectivePass = false;
+                    if (option_UseForcedPerspectiveRaycast)
+                    {
+                        var shootingEyePosition = FetchRightEyePositionInWorldSpace();
+                        Debug.Log(shootingEyePosition);
+                        var forwardVector = (tip.position - shootingEyePosition).normalized;
+                        if (Physics.Raycast(tip.position, forwardVector, out var hitInfo, 100, ForcedPerspectiveRaycastMask))
+                        {
+                            // We're hijacking the lastPressing* variables for the ForcedPerspective mode
+                            _lastPressingOnColliderRotation = RotationOnSurface(hitInfo);
+                            _lastPressingOnColliderPosition = PositionOnSurface(hitInfo);
+                            _isPressingOnCollider = true;
+                            _tipScale = ((shootingEyePosition - hitInfo.point).magnitude / (shootingEyePosition - tip.position).magnitude) * _defaultTipScale;
+                            StartOrContinue(_lastPressingOnColliderPosition, _lastPressingOnColliderRotation);
+                            _isPaintingForcedPerspective = true;
+                            isForcedPerspectivePass = true;
+                        }
+                    }
+
+                    if (!isForcedPerspectivePass && !_isPaintingForcedPerspective)
+                    {
+                        StartOrContinue(tip.position, tip.rotation);
+                    }
                 }
             }
             else
             {
-                if (!_isMisclick) Terminate(tip.position, tip.rotation);
+                if (!_isMisclick)
+                {
+                    if (_isPaintingForcedPerspective)
+                    {
+                        Terminate(_lastPressingOnColliderPosition, _lastPressingOnColliderRotation);
+                        _tipScale = _defaultTipScale;
+                    }
+                    else
+                    {
+                        Terminate(tip.position, tip.rotation);
+                    }
+                }
                 _isMisclick = false;
                 _cannotExecutePressingOnCollider = false;
+                _isPaintingForcedPerspective = false;
             }
         }
 
@@ -500,6 +546,34 @@ namespace Hai.Basis.CilboxPencil
             var b03 = Vector3.Lerp(b0, b3, t);
             var s12 = Vector3.Lerp(s1, s2, t);
             return Vector3.Lerp(b03, s12, (1 - t) * t);
+        }
+
+        private Quaternion RotationOnSurface(RaycastHit hitInfo)
+        {
+            return Quaternion.LookRotation(-hitInfo.normal, tip.up);
+        }
+
+        private static Vector3 PositionOnSurface(RaycastHit hitInfo)
+        {
+            return hitInfo.point + hitInfo.normal * PressingOnColliderNormalBackawayDistance;
+        }
+
+        public Vector3 FetchRightEyePositionInWorldSpace()
+        {
+            // return BasisLocalCameraDriver.RightEyePosition(); // ????????????? This always returns the same vector? This contradicts the documentation??????
+            // Unity.Mathematics.float3 currentRightEyePosition = BasisEyeTrackingManager.Current.RightEyePosition; // Not working, always returns 0
+            var cam = BasisLocalCameraDriver.CameraInstance;
+            if (cam != null && cam.stereoEnabled)
+            {
+                var rightEyeViewMatrix = cam.GetStereoViewMatrix(Camera.StereoscopicEye.Right);
+                var pos = rightEyeViewMatrix.inverse.MultiplyPoint(Vector3.zero);
+                return pos;
+            }
+            if (cam != null)
+            {
+                return cam.transform.position;
+            }
+            return Vector3.zero;
         }
 
 #region Networking
