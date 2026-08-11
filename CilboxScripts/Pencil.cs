@@ -14,6 +14,7 @@ namespace Hai.Basis.CilboxPencil
         private const float CommitThresholdDistance = 0.005f;
         private const float CommitThresholdDistanceSquared = CommitThresholdDistance * CommitThresholdDistance;
         private const float CommitThresholdAngleDeg = 15f;
+        private const float ColinearityThreshold = 0.9994f; // An angle of 2 degrees (goes in both directions, therefore it should be making a cone of 4 degrees in total)
 
         // Framerate Interpolation
         private const float TooFarThresholdDistance = 0.03f;
@@ -48,6 +49,7 @@ namespace Hai.Basis.CilboxPencil
         private float _pickupTime;
         private bool _isMisclick;
         private Vector3 _previouslyCommittedPoint;
+        private List<Vector3> _colinearTestHistory = new();
 
         // Framerate Interpolation
         private bool _hasPreviousPreviousPoint;
@@ -125,8 +127,8 @@ namespace Hai.Basis.CilboxPencil
 
             if (_isPickedUp)
             {
+#if true // (AUDIT): Code disabled because Raycasts are not allowed on Basis Props as of this time of writing
                 var raycastPos = tip.position - tip.forward * PressingOnColliderRaycastBackingDistance;
-#if false // (AUDIT): Code disabled because Raycasts are not allowed on Basis Props as of this time of writing
                 if (Physics.Raycast(raycastPos, tip.forward, out var hitInfo, PressingOnColliderRaycastBackingDistance + PressingOnColliderRaycastMagnetismDistance, PressingOnColliderRaycastMask))
                 {
                     modelMover.position = hitInfo.point;
@@ -183,15 +185,29 @@ namespace Hai.Basis.CilboxPencil
             }
         }
 
-        public void StartOrContinue(Vector3 tipPosition, Quaternion tipRotation)
+        public void StartOrContinue(Vector3 tipPosition, Quaternion tipRotation, bool forceCommit = false)
         {
-            if (!_hasPreviousPoint || IsDifferentEnoughFromPrevious(tipPosition, tipRotation))
+            var mustCommit = forceCommit || !_hasPreviousPoint || IsAngleDifferentEnoughFromPrevious(tipRotation);
+            var isCommitCausedByNonColinearity = false;
+            if (!mustCommit)
             {
+                if (IsPositionDifferentEnoughFromPrevious(tipPosition) && RememberAndTestForNonColinearity__MutatesFieldInside(tipPosition))
+                {
+                    mustCommit = true;
+                    isCommitCausedByNonColinearity = _colinearTestHistory.Count >= 2;
+                }
+            }
+            if (mustCommit)
+            {
+                _colinearTestHistory.Clear();
                 if (!_hasPreviousPoint)
                 {
                     if (null != mainLineRenderer) mainLineRenderer.positionCount = 0;
                 }
-                if (_hasPreviousPreviousPoint && IsTooDifferentFromPrevious(tipPosition))
+                if (
+                    // If there was a colinear test, then it cannot be interpolated.
+                    !isCommitCausedByNonColinearity
+                    && _hasPreviousPreviousPoint && IsTooDifferentFromPrevious(tipPosition))
                 {
                     // TODO: This interpolation doesn't do a great job at curves, (partly) because it's immediately building the current point
                     // without taking into account future information about the next point in the curve.
@@ -217,6 +233,16 @@ namespace Hai.Basis.CilboxPencil
                     var s1 = PrepareSeilerInterpolation_result[2];
                     var s2 = PrepareSeilerInterpolation_result[3];
                     var quatFrom = _previouslyCommittedQuat;
+
+                    // FIXME: This block probably creates empty triangles, but I'm not entirely sure of this
+                    {
+                        _currentVerts[_nextVert - 2] = b0 + quatFrom * (new Vector3(1, 0f, 0) * _tipScale);
+                        _currentVerts[_nextVert - 1] = b0 + quatFrom * (new Vector3(-1, 0f, 0) * _tipScale);
+
+                        var normal = quatFrom * -Vector3.forward;
+                        _currentNormals[_nextVert - 2] = normal;
+                        _currentNormals[_nextVert - 1] = normal;
+                    }
 
                     var k = 1;
                     while (k < numberOfThings)
@@ -245,6 +271,7 @@ namespace Hai.Basis.CilboxPencil
                 _memoryLength++;
                 _needsNetworkUpdate = true;
                 _previousPreviousCommittedPoint = _previouslyCommittedPoint; // Just because this executes doesn't mean we actually had a previous committed point.
+                _hasPreviousPreviousPoint = _hasPreviousPoint;
                 _previouslyCommittedPoint = tipPosition;
                 _previouslyCommittedQuat = tipRotation;
 
@@ -259,12 +286,16 @@ namespace Hai.Basis.CilboxPencil
             else
             {
                 _currentVerts[_nextVert - 2] = tipPosition + tipRotation * (new Vector3(1, 0f, 0) * _tipScale);
-                _currentVerts[_nextVert - 1] = tipPosition + tipRotation * (new Vector3(-1, 0f, 0) * _tipScale);
+                var secondVert = tipPosition + tipRotation * (new Vector3(-1, 0f, 0) * _tipScale);
+                _currentVerts[_nextVert - 1] = secondVert;
 
                 var normal = tipRotation * -Vector3.forward;
                 _currentNormals[_nextVert - 2] = normal;
                 _currentNormals[_nextVert - 1] = normal;
                 _currentMeshNullable.SetVertices(_currentVerts);
+                _currentMeshNullable.SetNormals(_currentNormals);
+
+                RecalculateBoundsAndApplyToHolderMeshRenderer(secondVert);
 
                 if (null != mainLineRenderer)
                 {
@@ -272,14 +303,57 @@ namespace Hai.Basis.CilboxPencil
                 }
             }
 
-            _hasPreviousPreviousPoint = _hasPreviousPoint;
             _hasPreviousPoint = true;
         }
 
-        private bool IsDifferentEnoughFromPrevious(Vector3 tipPosition, Quaternion tipRotation)
+        private bool RememberAndTestForNonColinearity__MutatesFieldInside(Vector3 tipPosition)
         {
-            return Vector3.SqrMagnitude(_previouslyCommittedPoint - tipPosition) > CommitThresholdDistanceSquared
-                || Quaternion.Angle(_previouslyCommittedQuat, tipRotation) > CommitThresholdAngleDeg;
+            _colinearTestHistory.Add(tipPosition);
+            if (_colinearTestHistory.Count < 2)
+            {
+                // Condition must come before adding to the list
+                return false;
+            }
+
+            var firstLoop = true;
+            var majorDirection = Vector3.zero;
+            var previousPoint = _previouslyCommittedPoint;
+            var previousDirection = Vector3.zero;
+            foreach (var testMe in _colinearTestHistory)
+            {
+                var direction = (testMe - previousPoint).normalized;
+                if (firstLoop)
+                {
+                    firstLoop = false;
+                    majorDirection = direction;
+                }
+                else
+                {
+                    if (
+                        // Test for colinearity with the first direction
+                        Vector3.Dot(direction, majorDirection) < ColinearityThreshold ||
+                        // The following is needed to make sure lines that go back and forth
+                        Vector3.Dot(direction, previousDirection) < ColinearityThreshold)
+                    {
+                        return true; // This is either non-colinear, or it's going the other direction.
+                    }
+                }
+
+                previousPoint = testMe;
+                previousDirection = direction;
+            }
+
+            return false; // This is colinear and going in the same direction.
+        }
+
+        private bool IsAngleDifferentEnoughFromPrevious(Quaternion tipRotation)
+        {
+            return Quaternion.Angle(_previouslyCommittedQuat, tipRotation) > CommitThresholdAngleDeg;
+        }
+
+        private bool IsPositionDifferentEnoughFromPrevious(Vector3 tipPosition)
+        {
+            return Vector3.SqrMagnitude(_previouslyCommittedPoint - tipPosition) > CommitThresholdDistanceSquared;
         }
 
         private bool IsTooDifferentFromPrevious(Vector3 tipPosition)
@@ -291,7 +365,7 @@ namespace Hai.Basis.CilboxPencil
         {
             if (!_hasPreviousPoint) return;
 
-            StartOrContinue(tipPosition, tipRotation);
+            StartOrContinue(tipPosition, tipRotation, true);
 
             EnsureCapacity();
             _points[_memoryLength] = TerminationMagicVector;
@@ -360,14 +434,6 @@ namespace Hai.Basis.CilboxPencil
                 _currentNormals.Add(normal);
                 _currentNormals.Add(normal);
 
-                var anyBoundsChanged = false;
-                if (newPos2.x < _boundsMin.x) { _boundsMin.x = newPos2.x; anyBoundsChanged = true; }
-                if (newPos2.x > _boundsMax.x) { _boundsMax.x = newPos2.x; anyBoundsChanged = true; }
-                if (newPos2.y < _boundsMin.y) { _boundsMin.y = newPos2.y; anyBoundsChanged = true; }
-                if (newPos2.y > _boundsMax.y) { _boundsMax.y = newPos2.y; anyBoundsChanged = true; }
-                if (newPos2.z < _boundsMin.z) { _boundsMin.z = newPos2.z; anyBoundsChanged = true; }
-                if (newPos2.z > _boundsMax.z) { _boundsMax.z = newPos2.z; anyBoundsChanged = true; }
-
                 // (N-2) ... (N)
                 // (N-1)
                 //             /
@@ -380,12 +446,25 @@ namespace Hai.Basis.CilboxPencil
                 _currentMeshNullable.SetNormals(_currentNormals);
                 _currentMeshNullable.SetTriangles(_currentTris, 0);
 
-                if (anyBoundsChanged)
-                {
-                    _holderMeshRenderer.bounds = CalculateBounds();
-                }
+                // FIXME: Why does this fail to update the bounds when the line is being drawn out by a long stretch of colinear points?
+                RecalculateBoundsAndApplyToHolderMeshRenderer(newPos2);
 
                 _nextVert = (ushort)(n + 2);
+            }
+        }
+
+        private void RecalculateBoundsAndApplyToHolderMeshRenderer(Vector3 secondVertex)
+        {
+            var anyBoundsChanged = false;
+            if (secondVertex.x < _boundsMin.x) { _boundsMin.x = secondVertex.x; anyBoundsChanged = true; }
+            if (secondVertex.x > _boundsMax.x) { _boundsMax.x = secondVertex.x; anyBoundsChanged = true; }
+            if (secondVertex.y < _boundsMin.y) { _boundsMin.y = secondVertex.y; anyBoundsChanged = true; }
+            if (secondVertex.y > _boundsMax.y) { _boundsMax.y = secondVertex.y; anyBoundsChanged = true; }
+            if (secondVertex.z < _boundsMin.z) { _boundsMin.z = secondVertex.z; anyBoundsChanged = true; }
+            if (secondVertex.z > _boundsMax.z) { _boundsMax.z = secondVertex.z; anyBoundsChanged = true; }
+            if (anyBoundsChanged)
+            {
+                _holderMeshRenderer.bounds = CalculateBounds();
             }
         }
 
