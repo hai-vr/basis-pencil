@@ -9,7 +9,7 @@ using UnityEngine;
 
 namespace Hai.Basis.CilboxPencil
 {
-    // [Cilboxable]
+    [Cilboxable]
     public class Pencil : MonoBehaviour
     {
         private const float CommitThresholdDistance = 0.005f;
@@ -29,7 +29,7 @@ namespace Hai.Basis.CilboxPencil
         private const float PressingOnColliderNormalBackawayDistance = 0.0001f;
 
         // ForcedPerspective mode
-        private const int ForcedPerspectiveRaycastMask = ~((1 << 2) | (1 << 3) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 10) | (1 << 11));
+        private const int ForcedPerspectiveRaycastMask = ~((1 << 2) | (1 << 3) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 10) | (1 << 11)); // Same as PressingOnCollider but we allow the two UI layers
 
         // Networking
         private const int CapacityIncrease = 200;
@@ -253,7 +253,13 @@ namespace Hai.Basis.CilboxPencil
                 if (
                     // If there was a colinear test, then it cannot be interpolated.
                     !isCommitCausedByNonColinearity
-                    && _hasPreviousPreviousPoint && IsTooDifferentFromPrevious(tipPosition))
+                    && _hasPreviousPreviousPoint && IsTooDifferentFromPrevious(tipPosition)
+                    && (
+                        // If it's NOT forced perspective, we can execute the interpolation.
+                        !_isPaintingForcedPerspective
+                        // Otherwise, if it IS forced perspective, we can only interpolate if the plane normal is similar to the previous plane normal.
+                        || Vector3.Dot(tipRotation * Vector3.forward, _previouslyCommittedQuat * Vector3.forward) > 0.99f
+                        ))
                 {
                     // TODO: This interpolation doesn't do a great job at curves, (partly) because it's immediately building the current point
                     // without taking into account future information about the next point in the curve.
