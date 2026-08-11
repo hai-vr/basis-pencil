@@ -126,6 +126,7 @@ namespace Hai.Basis.CilboxPencil
             if (_isPickedUp)
             {
                 var raycastPos = tip.position - tip.forward * PressingOnColliderRaycastBackingDistance;
+#if false // (AUDIT): Code disabled because Raycasts are not allowed on Basis Props as of this time of writing
                 if (Physics.Raycast(raycastPos, tip.forward, out var hitInfo, PressingOnColliderRaycastBackingDistance + PressingOnColliderRaycastMagnetismDistance, PressingOnColliderRaycastMask))
                 {
                     modelMover.position = hitInfo.point;
@@ -134,6 +135,10 @@ namespace Hai.Basis.CilboxPencil
                     _isPressingOnCollider = true;
                     StartOrContinue(_lastPressingOnColliderPosition, _lastPressingOnColliderRotation);
                 }
+#else
+                if (false)
+                {}
+#endif
                 else
                 {
                     modelMover.localPosition = Vector3.zero;
