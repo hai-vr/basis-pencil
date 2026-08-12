@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using Basis.Network.Core;
 using UnityEngine;
+using Random = UnityEngine.Random;
 
 namespace Hai.Basis.CilboxPencil
 {
@@ -14,6 +15,27 @@ namespace Hai.Basis.CilboxPencil
 
         private const byte Packet_C2O_RequestInitialization = 101;
         private const byte Packet_A2A_Serial = 1;
+
+        private readonly Dictionary<int, List<Vector3>> _groupToNetworkedPoints = new();
+        private readonly Dictionary<int, List<Quaternion>> _groupToNetworkedQuats = new();
+        private readonly Dictionary<int, List<float>> _groupToNetworkedScale = new();
+
+        private readonly List<int> _newIndicesToBeSent = new();
+
+        private void StoreInNetworkDictionary()
+        {
+            int index;
+            do
+            {
+                index = Random.Range(1_000, 2147483647);
+            } while (_groupToNetworkedPoints.ContainsKey(index));
+
+            _groupToNetworkedPoints[index] = new List<Vector3>(_beingDrawnPoints);
+            _groupToNetworkedQuats[index] = new List<Quaternion>(_beingDrawnQuats);
+            _groupToNetworkedScale[index] = new List<float>(_beingDrawnScale);
+
+            _newIndicesToBeSent.Add(index);
+        }
 
         private void WhenNetworkReady()
         {
@@ -49,19 +71,6 @@ namespace Hai.Basis.CilboxPencil
             if (packetId == Packet_A2A_Serial)
             {
                 return;
-            }
-        }
-
-        private void EnsureCapacity()
-        {
-            if (_memoryLength == _points.Length)
-            {
-                var tempV = new Vector3[_points.Length + CapacityIncrease];
-                var tempQ = new Quaternion[_points.Length + CapacityIncrease];
-                Array.Copy(_points, tempV, _points.Length);
-                Array.Copy(_quats, tempQ, _points.Length);
-                _points = tempV;
-                _quats = tempQ;
             }
         }
 

@@ -33,13 +33,9 @@ namespace Hai.Basis.CilboxPencil
 
         // ForcedPerspective mode
         private const int ForcedPerspectiveRaycastMask = ~((1 << 2) | (1 << 3) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 10) | (1 << 11)); // Same as PressingOnCollider but we allow the two UI layers
-
-        // Networking
-        private const int CapacityIncrease = 200;
         private const int WantsForcePerspective_None = 0;
         private const int WantsForcePerspective_Left = 1;
         private const int WantsForcePerspective_Right = 2;
-        private readonly Vector3 TerminationMagicVector = new(0, -10_000, 0);
 
         //
 
@@ -52,7 +48,6 @@ namespace Hai.Basis.CilboxPencil
 
         public GameObject instantiateMe;
         public MeshFilter instantiateMe_Filter;
-        public MeshRenderer instantiateMe_Renderer;
 
         private bool _isEnabled;
 
@@ -62,7 +57,7 @@ namespace Hai.Basis.CilboxPencil
         private bool _isMisclick;
         private bool _hasPreviousPoint;
         private Vector3 _previouslyCommittedPoint;
-        private List<Vector3> _colinearTestHistory = new();
+        private readonly List<Vector3> _colinearTestHistory = new();
 
         // Framerate Interpolation
         private bool _hasPreviousPreviousPoint;
@@ -96,12 +91,9 @@ namespace Hai.Basis.CilboxPencil
         private BasisNetworkShim _network;
         private bool _needsNetworkUpdate;
         private bool _isNetworkReady;
-        private Vector3[] _points = new Vector3[10];
-        private Quaternion[] _quats = new Quaternion[10];
-        private int _memoryLength = 0;
-        // private int _numberOfGroups;
-        // private Dictionary<int, List<Vector3>> _groupToNetworkedPoints = new();
-        // private Dictionary<int, List<Quaternion>> _groupToNetworkedQuats = new();
+        private readonly List<Vector3> _beingDrawnPoints = new();
+        private readonly List<Quaternion> _beingDrawnQuats = new();
+        private readonly List<float> _beingDrawnScale = new();
 
         //
 
@@ -148,10 +140,17 @@ namespace Hai.Basis.CilboxPencil
 
         private void Update()
         {
-            if (_cannotExecutePressingOnCollider) return;
+            UpdateWhilePickedUpAndTriggerIsNotPressed();
+        }
 
+        private void UpdateWhilePickedUpAndTriggerIsNotPressed()
+        {
+            if (!_cannotExecutePressingOnCollider) return; // This is usually true when the user is pressing the trigger.
+
+            var needToUnpressCollider = false;
             if (_isPickedUp)
             {
+                // Detect when the user is poking their dominant eye.
                 if (option_PokeDominantEyeToUseForcedPerspectiveRaycast && _userWantsForcePerspective_None_Left_Right == WantsForcePerspective_None)
                 {
                     if (Vector3.Distance(FetchEyePositionInWorldSpace(WantsForcePerspective_Right), tip.position) < 0.15f)
@@ -165,6 +164,7 @@ namespace Hai.Basis.CilboxPencil
                 }
 
 #if PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS // (AUDIT): Code sometimes disabled because Raycasts are not allowed on Basis Props as of this time of writing
+                // Detect when the pen is pressing onto to a wall:
                 var raycastPos = tip.position - tip.forward * PressingOnColliderRaycastBackingDistance;
                 if (Physics.Raycast(raycastPos, tip.forward, out var hitInfo, PressingOnColliderRaycastBackingDistance + PressingOnColliderRaycastMagnetismDistance, PressingOnColliderRaycastMask))
                 {
@@ -180,21 +180,19 @@ namespace Hai.Basis.CilboxPencil
 #endif
                 else
                 {
-                    modelMover.localPosition = Vector3.zero;
-                    if (_isPressingOnCollider)
-                    {
-                        Terminate(_lastPressingOnColliderPosition, _lastPressingOnColliderRotation);
-                        _isPressingOnCollider = false;
-                    }
+                    needToUnpressCollider = _isPressingOnCollider;
                 }
             }
             else
             {
-                if (_isPressingOnCollider)
-                {
-                    Terminate(_lastPressingOnColliderPosition, _lastPressingOnColliderRotation);
-                    _isPressingOnCollider = false;
-                }
+                needToUnpressCollider = _isPressingOnCollider;
+            }
+
+            if (needToUnpressCollider)
+            {
+                modelMover.localPosition = Vector3.zero;
+                Terminate(_lastPressingOnColliderPosition, _lastPressingOnColliderRotation);
+                _isPressingOnCollider = false;
             }
         }
 
@@ -336,21 +334,20 @@ namespace Hai.Basis.CilboxPencil
 
                         var virtualPosition = SeilerInterpolate(b0, b3, s1, s2, t);
                         var virtualRotation = Quaternion.Slerp(quatFrom, tipRotation, t);
-                        EnsureCapacity();
-                        _points[_memoryLength] = virtualPosition; // TODO: Maybe we could network just the input tip points, and have the remote simulate the interpolation too
-                        _quats[_memoryLength] = virtualRotation;
-                        _memoryLength++;
-                        _needsNetworkUpdate = true;
+
+                        _beingDrawnPoints.Add(virtualPosition);
+                        _beingDrawnQuats.Add(virtualRotation);
+                        _beingDrawnScale.Add(1f);
 
                         InitializeOrAddTwoVerticesToMesh(virtualPosition, tipRotation, false);
                         k++;
                     }
                 }
 
-                EnsureCapacity();
-                _points[_memoryLength] = tipPosition;
-                _quats[_memoryLength] = tipRotation;
-                _memoryLength++;
+                _beingDrawnPoints.Add(tipPosition);
+                _beingDrawnQuats.Add(tipRotation);
+                _beingDrawnScale.Add(_tipScale);
+
                 _needsNetworkUpdate = true;
                 _previousPreviousCommittedPoint = _previouslyCommittedPoint; // Just because this executes doesn't mean we actually had a previous committed point.
                 _hasPreviousPreviousPoint = _hasPreviousPoint;
@@ -447,12 +444,17 @@ namespace Hai.Basis.CilboxPencil
 
             StartOrContinue(tipPosition, tipRotation, true);
 
-            EnsureCapacity();
-            _points[_memoryLength] = TerminationMagicVector;
-            _quats[_memoryLength] = Quaternion.identity;
-            _memoryLength++;
-            _needsNetworkUpdate = true;
+            _beingDrawnPoints.Add(tipPosition);
+            _beingDrawnQuats.Add(tipRotation);
+            _beingDrawnScale.Add(_tipScale);
+            // --------------
+            StoreInNetworkDictionary();
+            // --------------
+            _beingDrawnPoints.Clear();
+            _beingDrawnQuats.Clear();
+            _beingDrawnScale.Clear();
 
+            _needsNetworkUpdate = true;
 
             _hasPreviousPoint = false;
             _hasPreviousPreviousPoint = false;
