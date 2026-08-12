@@ -37,7 +37,7 @@ namespace Hai.Basis.CilboxPencil
 
         //
 
-        public bool option_UseForcedPerspectiveRaycast = false;
+        public bool option_PokeDominantEyeToUseForcedPerspectiveRaycast = true;
 
         public BasisPickupInteractable pickup;
         public Transform tip;
@@ -83,6 +83,7 @@ namespace Hai.Basis.CilboxPencil
         private Vector3 _lastPressingOnColliderPosition;
 
         // ForcedPerspective mode
+        private bool _userWantsForcePerspective = false;
         private bool _isPaintingForcedPerspective;
 
         // Networking
@@ -130,6 +131,8 @@ namespace Hai.Basis.CilboxPencil
         {
             _isMisclick = false;
             _isPickedUp = false;
+
+            _userWantsForcePerspective = false;
         }
 
         private void Update()
@@ -138,6 +141,11 @@ namespace Hai.Basis.CilboxPencil
 
             if (_isPickedUp)
             {
+                if (option_PokeDominantEyeToUseForcedPerspectiveRaycast && !_userWantsForcePerspective && Vector3.Distance(FetchRightEyePositionInWorldSpace(), tip.position) < 0.15f)
+                {
+                    _userWantsForcePerspective = true;
+                }
+
 #if true // (AUDIT): Code disabled because Raycasts are not allowed on Basis Props as of this time of writing
                 var raycastPos = tip.position - tip.forward * PressingOnColliderRaycastBackingDistance;
                 if (Physics.Raycast(raycastPos, tip.forward, out var hitInfo, PressingOnColliderRaycastBackingDistance + PressingOnColliderRaycastMagnetismDistance, PressingOnColliderRaycastMask))
@@ -187,7 +195,7 @@ namespace Hai.Basis.CilboxPencil
                     _isPressingOnCollider = false;
 
                     bool isForcedPerspectivePass = false;
-                    if (option_UseForcedPerspectiveRaycast)
+                    if (_userWantsForcePerspective)
                     {
                         var shootingEyePosition = FetchRightEyePositionInWorldSpace();
                         Debug.Log(shootingEyePosition);
