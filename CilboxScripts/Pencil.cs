@@ -1,8 +1,13 @@
-﻿using System.Collections.Generic;
+﻿#define PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS
+#define BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS
+
+using System.Collections.Generic;
 using Basis;
 using Basis.Scripts.BasisSdk.Interactions;
 using Basis.Scripts.Device_Management.Devices;
+#if BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS // (AUDIT): API is not accessible by props
 using Basis.Scripts.Drivers;
+#endif
 using UnityEngine;
 
 namespace Hai.Basis.CilboxPencil
@@ -159,7 +164,7 @@ namespace Hai.Basis.CilboxPencil
                     }
                 }
 
-#if true // (AUDIT): Code disabled because Raycasts are not allowed on Basis Props as of this time of writing
+#if PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS // (AUDIT): Code sometimes disabled because Raycasts are not allowed on Basis Props as of this time of writing
                 var raycastPos = tip.position - tip.forward * PressingOnColliderRaycastBackingDistance;
                 if (Physics.Raycast(raycastPos, tip.forward, out var hitInfo, PressingOnColliderRaycastBackingDistance + PressingOnColliderRaycastMagnetismDistance, PressingOnColliderRaycastMask))
                 {
@@ -212,6 +217,7 @@ namespace Hai.Basis.CilboxPencil
                     {
                         var shootingEyePosition = FetchEyePositionInWorldSpace(_userWantsForcePerspective_None_Left_Right);
                         var forwardVector = (tip.position - shootingEyePosition).normalized;
+#if PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS // (AUDIT): Code sometimes disabled because Raycasts are not allowed on Basis Props as of this time of writing
                         if (Physics.Raycast(tip.position, forwardVector, out var hitInfo, 100, ForcedPerspectiveRaycastMask))
                         {
                             // We're hijacking the lastPressing* variables for the ForcedPerspective mode
@@ -223,6 +229,7 @@ namespace Hai.Basis.CilboxPencil
                             _isPaintingForcedPerspective = true;
                             isForcedPerspectivePass = true;
                         }
+#endif
                     }
 
                     if (!isForcedPerspectivePass && !_isPaintingForcedPerspective)
@@ -597,6 +604,7 @@ namespace Hai.Basis.CilboxPencil
 
         private Vector3 FetchEyePositionInWorldSpace(int wantsForcePerspective)
         {
+#if BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS // (AUDIT): API is not accessible by props, needs a shim that works
             // return BasisLocalCameraDriver.RightEyePosition(); // ????????????? This always returns the same vector? This contradicts the documentation??????
             // Unity.Mathematics.float3 currentRightEyePosition = BasisEyeTrackingManager.Current.RightEyePosition; // Not working, always returns 0
             var cam = BasisLocalCameraDriver.CameraInstance;
@@ -611,6 +619,7 @@ namespace Hai.Basis.CilboxPencil
 
                 return cam.transform.position;
             }
+#endif
             return Vector3.zero;
         }
     }
