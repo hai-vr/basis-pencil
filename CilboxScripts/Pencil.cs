@@ -66,7 +66,7 @@ namespace Hai.Basis.CilboxPencil
 
         // New line rendering
         private float _tipScale;
-        public Mesh _currentMeshNullable;
+        private Mesh _currentMeshNullable;
         private readonly List<Vector3> _currentVerts = new();
         private readonly List<Vector3> _currentNormals = new();
         private readonly List<ushort> _currentTris = new();
@@ -256,7 +256,96 @@ namespace Hai.Basis.CilboxPencil
             }
         }
 
-        public void StartOrContinue(Vector3 tipPosition, Quaternion tipRotation, bool forceCommit = false)
+        private void BuildMeshImmediate(List<Vector3> points, List<Quaternion> quats, List<float> scales)
+        {
+            var currentVerts = new List<Vector3>();
+            var currentNormals = new List<Vector3>();
+            var currentTris = new List<ushort>();
+            var boundsMin = Vector3.zero;
+            var boundsMax = Vector3.zero;
+            ushort nextVert = 0;
+
+            for (var i = 0; i < points.Count; i++)
+            {
+                var tipPosition = points[i];
+                var tipRotation = quats[i];
+                var tipScale = scales[i];
+
+                if (i == 0)
+                {
+                    currentVerts.Add(tipPosition + tipRotation * (new Vector3(1, -0.05f, 0) * tipScale));
+                    currentVerts.Add(tipPosition + tipRotation * (new Vector3(-1, -0.05f, 0) * tipScale));
+                    currentVerts.Add(tipPosition + tipRotation * (new Vector3(1, 0f, 0) * tipScale));
+                    currentVerts.Add(tipPosition + tipRotation * (new Vector3(-1, 0f, 0) * tipScale));
+                    boundsMin = currentVerts[0];
+                    boundsMax = currentVerts[3];
+                    currentTris.Clear();
+                    currentTris.Add(0); currentTris.Add(1); currentTris.Add(2);
+                    currentTris.Add(3); currentTris.Add(2); currentTris.Add(1);
+                    var normal = tipRotation * -Vector3.forward;
+                    currentNormals.Add(normal);
+                    currentNormals.Add(normal);
+                    currentNormals.Add(normal);
+                    currentNormals.Add(normal);
+                    nextVert = 4;
+                }
+                else
+                {
+                    var n = nextVert;
+                    // (N-2) ... (N)
+                    // (N-1) ... (N+1)
+                    var newPos0 = tipPosition + tipRotation * (new Vector3(1, 0f, 0) * tipScale);
+                    var newPos1 = tipPosition + tipRotation * (new Vector3(-1, 0f, 0) * tipScale);
+                    var normal = tipRotation * -Vector3.forward;
+
+                    currentVerts.Add(newPos0);
+                    currentVerts.Add(newPos1);
+                    currentNormals.Add(normal);
+                    currentNormals.Add(normal);
+
+                    // (N-2) ... (N)
+                    // (N-1)
+                    //             /
+                    //                      (N)
+                    //            (N-1) ... (N+1)
+                    currentTris.Add((ushort)(n - 2)); currentTris.Add((ushort)(n - 1)); currentTris.Add(n);
+                    currentTris.Add((ushort)(n + 1)); currentTris.Add(n); currentTris.Add((ushort)(n - 1));
+
+                    if (newPos1.x < boundsMin.x) { boundsMin.x = newPos1.x; }
+                    if (newPos1.x > boundsMax.x) { boundsMax.x = newPos1.x; }
+                    if (newPos1.y < boundsMin.y) { boundsMin.y = newPos1.y; }
+                    if (newPos1.y > boundsMax.y) { boundsMax.y = newPos1.y; }
+                    if (newPos1.z < boundsMin.z) { boundsMin.z = newPos1.z; }
+                    if (newPos1.z > boundsMax.z) { boundsMax.z = newPos1.z; }
+
+                    nextVert = (ushort)(n + 2);
+                }
+            }
+
+            var mesh = new Mesh();
+            mesh.SetVertices(currentVerts);
+            mesh.SetNormals(currentNormals);
+            mesh.SetTriangles(currentTris, 0);
+
+            var bounds = new Bounds(boundsMin + (boundsMax - boundsMin) * 0.5f, boundsMax - boundsMin);
+
+            GameObject holder;
+            {
+                // This should be the only place we extract instance variables (instantiateMe, instantiateMe_Filter, transform)
+                instantiateMe_Filter.mesh = mesh;
+                holder = Instantiate(instantiateMe, transform);
+                instantiateMe_Filter.mesh = null;
+            }
+
+            var holderMeshRenderer = holder.GetComponent<MeshRenderer>();
+            holderMeshRenderer.bounds = bounds;
+
+            holder.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
+            holder.transform.localScale = Vector3.one;
+            holder.SetActive(true);
+        }
+
+        private void StartOrContinue(Vector3 tipPosition, Quaternion tipRotation, bool forceCommit = false)
         {
             var mustCommit = forceCommit || !_hasPreviousPoint || IsAngleDifferentEnoughFromPrevious(tipRotation);
             var isCommitCausedByNonColinearity = false;
@@ -438,7 +527,7 @@ namespace Hai.Basis.CilboxPencil
             return Vector3.SqrMagnitude(_previouslyCommittedPoint - tipPosition) > TooFarThresholdDistanceSquared;
         }
 
-        public void Terminate(Vector3 tipPosition, Quaternion tipRotation)
+        private void Terminate(Vector3 tipPosition, Quaternion tipRotation)
         {
             if (!_hasPreviousPoint) return;
 
