@@ -237,10 +237,14 @@ namespace Hai.Basis.CilboxPencil
             var isCommitCausedByNonColinearity = false;
             if (!mustCommit)
             {
-                if (IsPositionDifferentEnoughFromPrevious(tipPosition) && RememberAndTestForNonColinearity__MutatesFieldInside(tipPosition))
+                if (IsPositionDifferentEnoughFromPrevious(tipPosition))
                 {
-                    mustCommit = true;
-                    isCommitCausedByNonColinearity = _colinearTestHistory.Count >= 2;
+                    _colinearTestHistory.Add(tipPosition);
+                    if (IsColinearTestHistoryNonColinear())
+                    {
+                        mustCommit = true;
+                        isCommitCausedByNonColinearity = _colinearTestHistory.Count >= 2;
+                    }
                 }
             }
             if (mustCommit)
@@ -358,12 +362,10 @@ namespace Hai.Basis.CilboxPencil
             _hasPreviousPoint = true;
         }
 
-        private bool RememberAndTestForNonColinearity__MutatesFieldInside(Vector3 tipPosition)
+        private bool IsColinearTestHistoryNonColinear()
         {
-            _colinearTestHistory.Add(tipPosition);
             if (_colinearTestHistory.Count < 2)
             {
-                // Condition must come before adding to the list
                 return false;
             }
 
