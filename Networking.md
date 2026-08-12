@@ -1,6 +1,18 @@
 ﻿Networking
 =====
 
+The networking of the pencil is essentially just syncing a non-nested KV store in no specific order,
+while attempting to submit data to late joiners as efficiently as possible by making use of the recipients array.
+
+- When a new entry in the KV store is received, instantiate the completed mesh into a new GameObject.
+- If we ever delete an entry from the KV store, destroy that GameObject.
+
+The owner takes care of adding items to the KV store:
+- by listening to the termination signal of the current line being drawn, or
+- by emitting the termination themselves, when the owner is the one drawing it.
+
+----
+
 - ⬜ The owner is the person who loaded the prop first.
 - ⬜ When someone draws with the pen, the ownership of the networking responsibility does not change.
   - Therefore, the owner is not necessarily the person who is currently drawing with the pen.

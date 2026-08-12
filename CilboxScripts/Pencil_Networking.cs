@@ -8,33 +8,45 @@ namespace Hai.Basis.CilboxPencil
 {
     public partial class Pencil
     {
+        // INDX: Data index, a random number.
+        // PLY: Player ID, supplied by Basis.
+
         private const int SizeOfInt = 4;
         private const int SizeOfFloat = 4;
         private const int SizeOfVector3 = 3 * SizeOfFloat;
         private const int SizeOfBadQuaternion = 3 * SizeOfFloat;
 
         private const byte Packet_C2O_RequestInitialization = 101;
+        private const byte Packet_O2C_NewINDX = 11;
         private const byte Packet_A2A_Serial = 1;
 
-        private readonly Dictionary<int, List<Vector3>> _groupToNetworkedPoints = new();
-        private readonly Dictionary<int, List<Quaternion>> _groupToNetworkedQuats = new();
-        private readonly Dictionary<int, List<float>> _groupToNetworkedScale = new();
+        private readonly Dictionary<int, List<Vector3>> _indxToPoints = new();
+        private readonly Dictionary<int, List<Quaternion>> _indxToQuats = new();
+        private readonly Dictionary<int, List<float>> _indxScale = new();
 
-        private readonly List<int> _newIndicesToBeSent = new();
-
-        private void StoreInNetworkDictionary()
+        private void Owner_NewINDX()
         {
-            int index;
+            int indx;
             do
             {
-                index = Random.Range(1_000, 2147483647);
-            } while (_groupToNetworkedPoints.ContainsKey(index));
+                indx = Random.Range(1_000, 2147483647);
+            } while (_indxToPoints.ContainsKey(indx));
 
-            _groupToNetworkedPoints[index] = new List<Vector3>(_beingDrawnPoints);
-            _groupToNetworkedQuats[index] = new List<Quaternion>(_beingDrawnQuats);
-            _groupToNetworkedScale[index] = new List<float>(_beingDrawnScale);
+            _indxToPoints[indx] = new List<Vector3>(_beingDrawnPoints);
+            _indxToQuats[indx] = new List<Quaternion>(_beingDrawnQuats);
+            _indxScale[indx] = new List<float>(_beingDrawnScale);
 
-            _newIndicesToBeSent.Add(index);
+            _network.SendCustomNetworkEvent(
+                EncodeNewINDX(_beingDrawnPoints, _beingDrawnQuats, _beingDrawnScale),
+                DeliveryMethod.ReliableOrdered
+            );
+
+            WhenNewINDX(indx);
+        }
+
+        private void WhenNewINDX(int indx)
+        {
+            BuildMeshImmediate(_indxToPoints[indx], _indxToQuats[indx], _indxScale[indx]);
         }
 
         private void WhenNetworkReady()
@@ -67,6 +79,30 @@ namespace Hai.Basis.CilboxPencil
                     return;
                 }
             }
+            else
+            {
+                if (_network.CurrentOwnerId == playerID)
+                {
+                    if (packetId == Packet_O2C_NewINDX)
+                    {
+                        DecodeNewINDX(buffer);
+
+                        // ReSharper disable once CanSimplifyDictionaryLookupWithTryAdd
+                        if (!_indxToPoints.ContainsKey(_decodeNewINDX_INDX))
+                        {
+                            _indxToPoints[_decodeNewINDX_INDX] = _decodeNewINDX_Points;
+                            _indxToQuats[_decodeNewINDX_INDX] = _decodeNewINDX_Quats;
+                            _indxScale[_decodeNewINDX_INDX] = _decodeNewINDX_Scale;
+                            WhenNewINDX(_decodeNewINDX_INDX);
+                        }
+                        else
+                        {
+                            // Sometimes we might receive the same INDX, e.g. a line is being drawn as the player is joining,
+                            // this might not be an error, but we need to make sure not to build the mesh twice.
+                        }
+                    }
+                }
+            }
 
             if (packetId == Packet_A2A_Serial)
             {
@@ -79,13 +115,13 @@ namespace Hai.Basis.CilboxPencil
             _network.SendCustomNetworkEvent(new []{ Packet_A2A_Serial }, DeliveryMethod.ReliableSequenced, recipientsNullable);
         }
 
-        private void SubmitSerial(List<Vector3> points, List<Quaternion> quats, List<float> scale)
+        private byte[] EncodeNewINDX(List<Vector3> points, List<Quaternion> quats, List<float> scale)
         {
             var numberOfPoints = points.Count;
             if (numberOfPoints != quats.Count || numberOfPoints != scale.Count)
             {
                 Debug.LogError("Invalid state, data must be the same length.");
-                return;
+                return null;
             }
 
             var buffer = new byte[
@@ -97,7 +133,7 @@ namespace Hai.Basis.CilboxPencil
               + SizeOfFloat * numberOfPoints // Scale
             ];
 
-            buffer[0] = Packet_A2A_Serial;
+            buffer[0] = Packet_O2C_NewINDX;
             WriteInt(buffer, 1, numberOfPoints);
             for (var i = 0; i < numberOfPoints; i++)
             {
@@ -105,13 +141,15 @@ namespace Hai.Basis.CilboxPencil
                 WriteBadQuaternion(buffer, 5 + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion, quats[i]);
                 WriteFloat(buffer, 5 + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat, scale[i]);
             }
+
+            return buffer;
         }
 
-        private int _decodePayloadIndex;
-        private List<Vector3> _decodePoints = new();
-        private List<Quaternion> _decodeQuats = new();
-        private List<float> _decodeScale = new();
-        private void DecodeSerial(byte[] buffer)
+        private int _decodeNewINDX_INDX;
+        private List<Vector3> _decodeNewINDX_Points = new();
+        private List<Quaternion> _decodeNewINDX_Quats = new();
+        private List<float> _decodeNewINDX_Scale = new();
+        private void DecodeNewINDX(byte[] buffer)
         {
             if (buffer.Length < 1 + SizeOfInt + SizeOfInt)
             {
@@ -119,10 +157,10 @@ namespace Hai.Basis.CilboxPencil
                 return;
             }
 
-            _decodePoints.Clear();
-            _decodeQuats.Clear();
-            _decodeScale.Clear();
-            _decodePayloadIndex = ReadInt(buffer, 1);
+            _decodeNewINDX_Points.Clear();
+            _decodeNewINDX_Quats.Clear();
+            _decodeNewINDX_Scale.Clear();
+            _decodeNewINDX_INDX = ReadInt(buffer, 1);
             var numberOfPoints = ReadInt(buffer, 1 + SizeOfInt);
 
             var isScaled = false;
@@ -143,9 +181,9 @@ namespace Hai.Basis.CilboxPencil
 
             for (var i = 0; i < numberOfPoints; i++)
             {
-                _decodePoints.Add(ReadVector3(buffer, 5 + i * SizeOfVector3));
-                _decodeQuats.Add(ReadBadQuaternion(buffer, 5 + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion));
-                _decodeScale.Add(isScaled
+                _decodeNewINDX_Points.Add(ReadVector3(buffer, 5 + i * SizeOfVector3));
+                _decodeNewINDX_Quats.Add(ReadBadQuaternion(buffer, 5 + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion));
+                _decodeNewINDX_Scale.Add(isScaled
                     ? ReadFloat(buffer, 5 + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat)
                     : 1f);
             }

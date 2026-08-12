@@ -37,17 +37,21 @@ namespace Hai.Basis.CilboxPencil
         private const int WantsForcePerspective_Left = 1;
         private const int WantsForcePerspective_Right = 2;
 
-        //
+        // ----
 
         public bool option_PokeDominantEyeToUseForcedPerspectiveRaycast = true;
 
         public BasisPickupInteractable pickup;
         public Transform tip;
-        public LineRenderer mainLineRenderer;
         public Transform modelMover;
 
         public GameObject instantiateMe;
         public MeshFilter instantiateMe_Filter;
+
+        // Debug only
+        public LineRenderer debug_lineRendererNullable;
+
+        // ----
 
         private bool _isEnabled;
 
@@ -95,7 +99,7 @@ namespace Hai.Basis.CilboxPencil
         private readonly List<Quaternion> _beingDrawnQuats = new();
         private readonly List<float> _beingDrawnScale = new();
 
-        //
+        // ----
 
         public void Start()
         {
@@ -366,12 +370,14 @@ namespace Hai.Basis.CilboxPencil
                 _colinearTestHistory.Clear();
                 if (!_hasPreviousPoint)
                 {
-                    if (null != mainLineRenderer) mainLineRenderer.positionCount = 0;
+                    if (null != debug_lineRendererNullable) debug_lineRendererNullable.positionCount = 0;
                 }
+
+                // # The code below creates a bezier interpolation when the end points would be too far from the previous point.
                 if (
                     // If there was a colinear test, then it cannot be interpolated.
                     !isCommitCausedByNonColinearity
-                    && _hasPreviousPreviousPoint && IsTooDifferentFromPrevious(tipPosition)
+                    && _hasPreviousPreviousPoint && IsPositionTooFarFromPrevious(tipPosition)
                     && (
                         // If it's NOT forced perspective, we can execute the interpolation.
                         !_isPaintingForcedPerspective
@@ -390,13 +396,8 @@ namespace Hai.Basis.CilboxPencil
                     var prePrevious = _previousPreviousCommittedPoint;
                     var previous = _previouslyCommittedPoint;
                     var current = tipPosition;
-                    // var direction0 = _lastHasDirectionVector
-                        // ? _directionVector
-                        // : (previous - prePrevious) * 0.5f; // FIXME: A bezier interpolation is probably unnecessary if the direction vectors are correlated
                     var direction0 = (previous - prePrevious) * 0.25f; // FIXME: A bezier interpolation is probably unnecessary if the direction vectors are correlated
                     var direction1 = (previous - current) * 0.25f;
-                    // var direction1 = (previous + direction0) - current;
-                    // var direction1 = Vector3.zero;
                     PrepareSeilerInterpolation(previous, current, direction0, direction1);
                     var b0 = PrepareSeilerInterpolation_result[0];
                     var b3 = PrepareSeilerInterpolation_result[1];
@@ -433,6 +434,8 @@ namespace Hai.Basis.CilboxPencil
                     }
                 }
 
+                // # The code below handles commiting the end point, as we've exceeded the distance threshold.
+
                 _beingDrawnPoints.Add(tipPosition);
                 _beingDrawnQuats.Add(tipRotation);
                 _beingDrawnScale.Add(_tipScale);
@@ -445,14 +448,16 @@ namespace Hai.Basis.CilboxPencil
 
                 InitializeOrAddTwoVerticesToMesh(tipPosition, tipRotation, true);
 
-                if (null != mainLineRenderer)
+                if (null != debug_lineRendererNullable)
                 {
-                    mainLineRenderer.positionCount++;
-                    mainLineRenderer.SetPosition(mainLineRenderer.positionCount - 1, tipPosition);
+                    debug_lineRendererNullable.positionCount++;
+                    debug_lineRendererNullable.SetPosition(debug_lineRendererNullable.positionCount - 1, tipPosition);
                 }
             }
             else
             {
+                // # The code below handles temporarily moving the mesh end point without actually committing it, usually because it is too similar to the previous point.
+
                 _currentVerts[_nextVert - 2] = tipPosition + tipRotation * (new Vector3(1, 0f, 0) * _tipScale);
                 var secondVert = tipPosition + tipRotation * (new Vector3(-1, 0f, 0) * _tipScale);
                 _currentVerts[_nextVert - 1] = secondVert;
@@ -465,9 +470,9 @@ namespace Hai.Basis.CilboxPencil
 
                 RecalculateBoundsAndApplyToHolderMeshRenderer(secondVert);
 
-                if (null != mainLineRenderer)
+                if (null != debug_lineRendererNullable)
                 {
-                    mainLineRenderer.SetPosition(mainLineRenderer.positionCount - 1, tipPosition);
+                    debug_lineRendererNullable.SetPosition(debug_lineRendererNullable.positionCount - 1, tipPosition);
                 }
             }
 
@@ -522,7 +527,7 @@ namespace Hai.Basis.CilboxPencil
             return Vector3.SqrMagnitude(_previouslyCommittedPoint - tipPosition) > CommitThresholdDistanceSquared;
         }
 
-        private bool IsTooDifferentFromPrevious(Vector3 tipPosition)
+        private bool IsPositionTooFarFromPrevious(Vector3 tipPosition)
         {
             return Vector3.SqrMagnitude(_previouslyCommittedPoint - tipPosition) > TooFarThresholdDistanceSquared;
         }
@@ -537,7 +542,14 @@ namespace Hai.Basis.CilboxPencil
             _beingDrawnQuats.Add(tipRotation);
             _beingDrawnScale.Add(_tipScale);
             // --------------
-            StoreInNetworkDictionary();
+            if (_network.IsLocalOwner())
+            {
+                Owner_NewINDX();
+            }
+            else
+            {
+                // TODO: We still need to submit the line terminator.
+            }
             // --------------
             _beingDrawnPoints.Clear();
             _beingDrawnQuats.Clear();
@@ -703,9 +715,9 @@ namespace Hai.Basis.CilboxPencil
             {
                 if (cam.stereoEnabled)
                 {
-                    var rightEyeViewMatrix = cam.GetStereoViewMatrix(wantsForcePerspective == WantsForcePerspective_Left ? Camera.StereoscopicEye.Left : Camera.StereoscopicEye.Right);
-                    var pos = rightEyeViewMatrix.inverse.MultiplyPoint(Vector3.zero);
-                    return pos;
+                    var eyeViewMatrix = cam.GetStereoViewMatrix(wantsForcePerspective == WantsForcePerspective_Left ? Camera.StereoscopicEye.Left : Camera.StereoscopicEye.Right);
+                    var eyePositionInWorldSpace = eyeViewMatrix.inverse.MultiplyPoint(Vector3.zero);
+                    return eyePositionInWorldSpace;
                 }
 
                 return cam.transform.position;
