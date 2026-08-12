@@ -1,7 +1,5 @@
-﻿using System;
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Basis;
-using Basis.Network.Core;
 using Basis.Scripts.BasisSdk.Interactions;
 using Basis.Scripts.Device_Management.Devices;
 using Basis.Scripts.Drivers;
@@ -10,7 +8,7 @@ using UnityEngine;
 namespace Hai.Basis.CilboxPencil
 {
     [Cilboxable]
-    public class Pencil : MonoBehaviour
+    public partial class Pencil : MonoBehaviour
     {
         private const float CommitThresholdDistance = 0.005f;
         private const float CommitThresholdDistanceSquared = CommitThresholdDistance * CommitThresholdDistance;
@@ -33,6 +31,9 @@ namespace Hai.Basis.CilboxPencil
 
         // Networking
         private const int CapacityIncrease = 200;
+        private const int WantsForcePerspective_None = 0;
+        private const int WantsForcePerspective_Left = 1;
+        private const int WantsForcePerspective_Right = 2;
         private readonly Vector3 TerminationMagicVector = new(0, -10_000, 0);
 
         //
@@ -83,7 +84,7 @@ namespace Hai.Basis.CilboxPencil
         private Vector3 _lastPressingOnColliderPosition;
 
         // ForcedPerspective mode
-        private bool _userWantsForcePerspective = false;
+        private int _userWantsForcePerspective_None_Left_Right = WantsForcePerspective_None;
         private bool _isPaintingForcedPerspective;
 
         // Networking
@@ -99,14 +100,8 @@ namespace Hai.Basis.CilboxPencil
 
         //
 
-        public void Start() { WhenEnable(); }
-        public void OnEnable() { WhenEnable(); }
-        private void OnDisable() { _isEnabled = false; }
-        private void WhenEnable()
+        public void Start()
         {
-            if (_isEnabled) return; // Cilbox quirk
-            _isEnabled = true;
-
             pickup.OnInteractEndEvent.AddListener(WhenDrop);
             pickup.OnInteractStartEvent.AddListener(WhenPickup);
             pickup.OnPickupUse.AddListener(WhileUsing);
@@ -116,8 +111,19 @@ namespace Hai.Basis.CilboxPencil
             _network.NetworkMessageReceived += WhenNetworkMessageReceived;
 
             _defaultTipScale = tip.lossyScale.x;
+
+            WhenEnable();
+        }
+        public void OnEnable() { WhenEnable(); }
+        private void OnDisable() { _isEnabled = false; }
+        private void WhenEnable()
+        {
+            if (_isEnabled) return; // Cilbox quirk
+            _isEnabled = true;
+
             _tipScale = _defaultTipScale;
 
+            // We need the root to be stuck at the origin so that the meshes stay fixed in world space.
             transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
         }
 
@@ -132,7 +138,7 @@ namespace Hai.Basis.CilboxPencil
             _isMisclick = false;
             _isPickedUp = false;
 
-            _userWantsForcePerspective = false;
+            _userWantsForcePerspective_None_Left_Right = WantsForcePerspective_None;
         }
 
         private void Update()
@@ -141,9 +147,16 @@ namespace Hai.Basis.CilboxPencil
 
             if (_isPickedUp)
             {
-                if (option_PokeDominantEyeToUseForcedPerspectiveRaycast && !_userWantsForcePerspective && Vector3.Distance(FetchRightEyePositionInWorldSpace(), tip.position) < 0.15f)
+                if (option_PokeDominantEyeToUseForcedPerspectiveRaycast && _userWantsForcePerspective_None_Left_Right == WantsForcePerspective_None)
                 {
-                    _userWantsForcePerspective = true;
+                    if (Vector3.Distance(FetchEyePositionInWorldSpace(WantsForcePerspective_Right), tip.position) < 0.15f)
+                    {
+                        _userWantsForcePerspective_None_Left_Right = WantsForcePerspective_Right;
+                    }
+                    else if (Vector3.Distance(FetchEyePositionInWorldSpace(WantsForcePerspective_Left), tip.position) < 0.15f)
+                    {
+                        _userWantsForcePerspective_None_Left_Right = WantsForcePerspective_Left;
+                    }
                 }
 
 #if true // (AUDIT): Code disabled because Raycasts are not allowed on Basis Props as of this time of writing
@@ -195,10 +208,9 @@ namespace Hai.Basis.CilboxPencil
                     _isPressingOnCollider = false;
 
                     bool isForcedPerspectivePass = false;
-                    if (_userWantsForcePerspective)
+                    if (_userWantsForcePerspective_None_Left_Right != WantsForcePerspective_None)
                     {
-                        var shootingEyePosition = FetchRightEyePositionInWorldSpace();
-                        Debug.Log(shootingEyePosition);
+                        var shootingEyePosition = FetchEyePositionInWorldSpace(_userWantsForcePerspective_None_Left_Right);
                         var forwardVector = (tip.position - shootingEyePosition).normalized;
                         if (Physics.Raycast(tip.position, forwardVector, out var hitInfo, 100, ForcedPerspectiveRaycastMask))
                         {
@@ -488,16 +500,17 @@ namespace Hai.Basis.CilboxPencil
                 // (N-2) ... (N)
                 // (N-1) ... (N+1)
                 var newPos0 = tipPosition + tipRotation * (new Vector3(1, 0f, 0) * _tipScale);
-                var newPos2 = tipPosition + tipRotation * (new Vector3(-1, 0f, 0) * _tipScale);
+                var newPos1 = tipPosition + tipRotation * (new Vector3(-1, 0f, 0) * _tipScale);
+                var normal = tipRotation * -Vector3.forward;
 
                 // We rewrite the previous two verts, locking in their last position.
                 _currentVerts[n - 2] = newPos0;
-                _currentVerts[n - 1] = newPos2;
+                _currentVerts[n - 1] = newPos1;
+                _currentNormals[n - 2] = normal;
+                _currentNormals[n - 1] = normal;
 
                 _currentVerts.Add(newPos0);
-                _currentVerts.Add(newPos2);
-
-                var normal = tipRotation * -Vector3.forward;
+                _currentVerts.Add(newPos1);
                 _currentNormals.Add(normal);
                 _currentNormals.Add(normal);
 
@@ -516,7 +529,7 @@ namespace Hai.Basis.CilboxPencil
                 if (recalculateBounds)
                 {
                     // FIXME: Why does this fail to update the bounds when the line is being drawn out by a long stretch of colinear points?
-                    RecalculateBoundsAndApplyToHolderMeshRenderer(newPos2);
+                    RecalculateBoundsAndApplyToHolderMeshRenderer(newPos1);
                 }
 
                 _nextVert = (ushort)(n + 2);
@@ -582,7 +595,7 @@ namespace Hai.Basis.CilboxPencil
             return hitInfo.point + hitInfo.normal * PressingOnColliderNormalBackawayDistance;
         }
 
-        public Vector3 FetchRightEyePositionInWorldSpace()
+        private Vector3 FetchEyePositionInWorldSpace(int wantsForcePerspective)
         {
             // return BasisLocalCameraDriver.RightEyePosition(); // ????????????? This always returns the same vector? This contradicts the documentation??????
             // Unity.Mathematics.float3 currentRightEyePosition = BasisEyeTrackingManager.Current.RightEyePosition; // Not working, always returns 0
@@ -591,7 +604,7 @@ namespace Hai.Basis.CilboxPencil
             {
                 if (cam.stereoEnabled)
                 {
-                    var rightEyeViewMatrix = cam.GetStereoViewMatrix(Camera.StereoscopicEye.Right);
+                    var rightEyeViewMatrix = cam.GetStereoViewMatrix(wantsForcePerspective == WantsForcePerspective_Left ? Camera.StereoscopicEye.Left : Camera.StereoscopicEye.Right);
                     var pos = rightEyeViewMatrix.inverse.MultiplyPoint(Vector3.zero);
                     return pos;
                 }
@@ -600,203 +613,5 @@ namespace Hai.Basis.CilboxPencil
             }
             return Vector3.zero;
         }
-
-#region Networking
-        private const byte Packet_C2O_RequestInitialization = 101;
-        private const byte Packet_A2A_Serial = 1;
-        private const int SizeOfInt = 4;
-        private const int SizeOfFloat = 4;
-        private const int SizeOfVector3 = 3 * SizeOfFloat;
-        private const int SizeOfBadQuaternion = 3 * SizeOfFloat;
-
-        private void WhenNetworkReady()
-        {
-            _isNetworkReady = true;
-            if (!_network.IsLocalOwner())
-            {
-                _network.SendCustomNetworkEvent(new []{ Packet_C2O_RequestInitialization }, DeliveryMethod.ReliableSequenced, new []{ _network.CurrentOwnerId });
-            }
-        }
-
-        private void WhenNetworkMessageReceived(ushort playerID, byte[] buffer, DeliveryMethod deliveryMethod)
-        {
-            if (buffer.Length == 0) return;
-
-            var packetId = buffer[0];
-
-            if (_network.IsLocalOwner())
-            {
-                if (packetId == Packet_C2O_RequestInitialization)
-                {
-                    // TODO: The owner should have an network update loop that:
-                    // - Ensures players who have not initialized the prop don't receive the prop.
-                    // - Collects which players still need data.
-                    // - For each data packet that a player needs, find which other players need that data.
-                    // - Send the data to only those players.
-                    // The aim is for the owner not to send the same packet multiple times,
-                    // and for the server to dispatch packets to only those who are missing the data.
-                    Submit(new []{ playerID });
-                    return;
-                }
-            }
-
-            if (packetId == Packet_A2A_Serial)
-            {
-                return;
-            }
-        }
-
-        private void EnsureCapacity()
-        {
-            if (_memoryLength == _points.Length)
-            {
-                var tempV = new Vector3[_points.Length + CapacityIncrease];
-                var tempQ = new Quaternion[_points.Length + CapacityIncrease];
-                Array.Copy(_points, tempV, _points.Length);
-                Array.Copy(_quats, tempQ, _points.Length);
-                _points = tempV;
-                _quats = tempQ;
-            }
-        }
-
-        private void Submit(ushort[] recipientsNullable)
-        {
-            _network.SendCustomNetworkEvent(new []{ Packet_A2A_Serial }, DeliveryMethod.ReliableSequenced, recipientsNullable);
-        }
-
-        public void SubmitSerial(List<Vector3> points, List<Quaternion> quats, List<float> scale)
-        {
-            var numberOfPoints = points.Count;
-            if (numberOfPoints != quats.Count || numberOfPoints != scale.Count)
-            {
-                Debug.LogError("Invalid state, data must be the same length.");
-                return;
-            }
-
-            var buffer = new byte[
-                1 // Packet number
-              + SizeOfInt // Payload Index
-              + SizeOfInt // NumberOfPoints (TODO: It should be possible to deduce this from the packet size)
-              + SizeOfVector3 * numberOfPoints // Points
-              + SizeOfBadQuaternion * numberOfPoints // Quats
-              + SizeOfFloat * numberOfPoints // Scale
-            ];
-
-            buffer[0] = Packet_A2A_Serial;
-            WriteInt(buffer, 1, numberOfPoints);
-            for (var i = 0; i < numberOfPoints; i++)
-            {
-                WriteVector3(buffer, 5 + i * SizeOfVector3, points[i]);
-                WriteBadQuaternion(buffer, 5 + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion, quats[i]);
-                WriteFloat(buffer, 5 + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat, scale[i]);
-            }
-        }
-
-        private int _decodePayloadIndex;
-        private List<Vector3> _decodePoints = new();
-        private List<Quaternion> _decodeQuats = new();
-        private List<float> _decodeScale = new();
-        public void DecodeSerial(byte[] buffer)
-        {
-            if (buffer.Length < 1 + SizeOfInt + SizeOfInt)
-            {
-                Debug.LogError("Invalid payload size.");
-                return;
-            }
-
-            _decodePoints.Clear();
-            _decodeQuats.Clear();
-            _decodeScale.Clear();
-            _decodePayloadIndex = ReadInt(buffer, 1);
-            var numberOfPoints = ReadInt(buffer, 1 + SizeOfInt);
-
-            var isScaled = false;
-            var unscaledPacketLength = 1 + SizeOfInt + SizeOfInt + SizeOfVector3 * numberOfPoints + SizeOfBadQuaternion * numberOfPoints;
-            if (buffer.Length != unscaledPacketLength)
-            {
-                var scaledPacketLength = unscaledPacketLength + SizeOfFloat * numberOfPoints;
-                if (buffer.Length != scaledPacketLength)
-                {
-                    Debug.LogError("Invalid payload size.");
-                    return;
-                }
-                else
-                {
-                    isScaled = true;
-                }
-            }
-
-            for (var i = 0; i < numberOfPoints; i++)
-            {
-                _decodePoints.Add(ReadVector3(buffer, 5 + i * SizeOfVector3));
-                _decodeQuats.Add(ReadBadQuaternion(buffer, 5 + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion));
-                _decodeScale.Add(isScaled
-                    ? ReadFloat(buffer, 5 + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat)
-                    : 1f);
-            }
-        }
-
-        public void WriteInt(byte[] buffer, int offset, int value)
-        {
-            buffer[offset] = (byte)(value >> 24);
-            buffer[offset + 1] = (byte)(value >> 16);
-            buffer[offset + 2] = (byte)(value >> 8);
-            buffer[offset + 3] = (byte)value;
-        }
-
-        public int ReadInt(byte[] buffer, int offset)
-        {
-            return (buffer[offset] << 24) | (buffer[offset + 1] << 16) | (buffer[offset + 2] << 8) | buffer[offset + 3];
-        }
-
-        public void WriteFloat(byte[] buffer, int offset, float value)
-        {
-            var intBits = BitConverter.ToInt32(BitConverter.GetBytes(value), 0);
-            buffer[offset] = (byte)(intBits >> 24);
-            buffer[offset + 1] = (byte)(intBits >> 16);
-            buffer[offset + 2] = (byte)(intBits >> 8);
-            buffer[offset + 3] = (byte)intBits;
-        }
-
-        public float ReadFloat(byte[] buffer, int offset)
-        {
-            var intBits = (buffer[offset] << 24) | (buffer[offset + 1] << 16) | (buffer[offset + 2] << 8) | buffer[offset + 3];
-            return BitConverter.ToSingle(BitConverter.GetBytes(intBits), 0);
-        }
-
-        public void WriteQuantizedFloat01(byte[] buffer, int offset, float value)
-        {
-            var toEncode = Mathf.Clamp01(value) ;
-            buffer[offset] = (byte)(toEncode * 255);
-        }
-
-        public float ReadQuantizedFloat01(byte[] buffer, int offset)
-        {
-            return ReadFloat(buffer, offset) / 255;
-        }
-
-        public void WriteVector3(byte[] buffer, int offset, Vector3 value)
-        {
-            WriteFloat(buffer, offset, value.x);
-            WriteFloat(buffer, offset + 4, value.y);
-            WriteFloat(buffer, offset + 8, value.z);
-        }
-
-        public Vector3 ReadVector3(byte[] buffer, int offset)
-        {
-            return new Vector3(ReadFloat(buffer, offset), ReadFloat(buffer, offset + 4), ReadFloat(buffer, offset + 8));
-        }
-
-        public void WriteBadQuaternion(byte[] buffer, int offset, Quaternion value)
-        {
-            // TODO: Replace this very inefficient encoding with the common quaternion compression technique
-            WriteVector3(buffer, offset, value.eulerAngles);
-        }
-
-        public Quaternion ReadBadQuaternion(byte[] buffer, int offset)
-        {
-            return Quaternion.Euler(ReadVector3(buffer, offset));
-        }
-#endregion
     }
 }
