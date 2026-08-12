@@ -315,8 +315,7 @@ namespace Hai.Basis.CilboxPencil
                         _memoryLength++;
                         _needsNetworkUpdate = true;
 
-                        // FIXME: We should apply the mesh to the renderer and calculate the bounds only at the end of this entire function.
-                        BuildMeshProgressively(virtualPosition, tipRotation);
+                        InitializeOrAddTwoVerticesToMesh(virtualPosition, tipRotation, false);
                         k++;
                     }
                 }
@@ -331,7 +330,7 @@ namespace Hai.Basis.CilboxPencil
                 _previouslyCommittedPoint = tipPosition;
                 _previouslyCommittedQuat = tipRotation;
 
-                BuildMeshProgressively(tipPosition, tipRotation);
+                InitializeOrAddTwoVerticesToMesh(tipPosition, tipRotation, true);
 
                 if (null != mainLineRenderer)
                 {
@@ -434,7 +433,7 @@ namespace Hai.Basis.CilboxPencil
             _holderMeshRenderer = null;
         }
 
-        private void BuildMeshProgressively(Vector3 tipPosition, Quaternion tipRotation)
+        private void InitializeOrAddTwoVerticesToMesh(Vector3 tipPosition, Quaternion tipRotation, bool recalculateBounds)
         {
             if (_currentMeshNullable == null)
             {
@@ -480,8 +479,14 @@ namespace Hai.Basis.CilboxPencil
                 var n = _nextVert;
                 // (N-2) ... (N)
                 // (N-1) ... (N+1)
-                _currentVerts.Add(tipPosition + tipRotation * (new Vector3(1, 0f, 0) * _tipScale));
+                var newPos0 = tipPosition + tipRotation * (new Vector3(1, 0f, 0) * _tipScale);
                 var newPos2 = tipPosition + tipRotation * (new Vector3(-1, 0f, 0) * _tipScale);
+
+                // We rewrite the previous two verts, locking in their last position.
+                _currentVerts[n - 2] = newPos0;
+                _currentVerts[n - 1] = newPos2;
+
+                _currentVerts.Add(newPos0);
                 _currentVerts.Add(newPos2);
 
                 var normal = tipRotation * -Vector3.forward;
@@ -500,8 +505,11 @@ namespace Hai.Basis.CilboxPencil
                 _currentMeshNullable.SetNormals(_currentNormals);
                 _currentMeshNullable.SetTriangles(_currentTris, 0);
 
-                // FIXME: Why does this fail to update the bounds when the line is being drawn out by a long stretch of colinear points?
-                RecalculateBoundsAndApplyToHolderMeshRenderer(newPos2);
+                if (recalculateBounds)
+                {
+                    // FIXME: Why does this fail to update the bounds when the line is being drawn out by a long stretch of colinear points?
+                    RecalculateBoundsAndApplyToHolderMeshRenderer(newPos2);
+                }
 
                 _nextVert = (ushort)(n + 2);
             }
@@ -586,7 +594,11 @@ namespace Hai.Basis.CilboxPencil
 
 #region Networking
         private const byte Packet_C2O_RequestInitialization = 101;
-        private const byte Packet_A2A_Write = 1;
+        private const byte Packet_A2A_Serial = 1;
+        private const int SizeOfInt = 4;
+        private const int SizeOfFloat = 4;
+        private const int SizeOfVector3 = 3 * SizeOfFloat;
+        private const int SizeOfBadQuaternion = 3 * SizeOfFloat;
 
         private void WhenNetworkReady()
         {
@@ -619,7 +631,7 @@ namespace Hai.Basis.CilboxPencil
                 }
             }
 
-            if (packetId == Packet_A2A_Write)
+            if (packetId == Packet_A2A_Serial)
             {
                 return;
             }
@@ -640,7 +652,141 @@ namespace Hai.Basis.CilboxPencil
 
         private void Submit(ushort[] recipientsNullable)
         {
-            _network.SendCustomNetworkEvent(new []{ Packet_A2A_Write }, DeliveryMethod.ReliableSequenced, recipientsNullable);
+            _network.SendCustomNetworkEvent(new []{ Packet_A2A_Serial }, DeliveryMethod.ReliableSequenced, recipientsNullable);
+        }
+
+        public void SubmitSerial(List<Vector3> points, List<Quaternion> quats, List<float> scale)
+        {
+            var numberOfPoints = points.Count;
+            if (numberOfPoints != quats.Count || numberOfPoints != scale.Count)
+            {
+                Debug.LogError("Invalid state, data must be the same length.");
+                return;
+            }
+
+            var buffer = new byte[
+                1 // Packet number
+              + SizeOfInt // Payload Index
+              + SizeOfInt // NumberOfPoints (TODO: It should be possible to deduce this from the packet size)
+              + SizeOfVector3 * numberOfPoints // Points
+              + SizeOfBadQuaternion * numberOfPoints // Quats
+              + SizeOfFloat * numberOfPoints // Scale
+            ];
+
+            buffer[0] = Packet_A2A_Serial;
+            WriteInt(buffer, 1, numberOfPoints);
+            for (var i = 0; i < numberOfPoints; i++)
+            {
+                WriteVector3(buffer, 5 + i * SizeOfVector3, points[i]);
+                WriteBadQuaternion(buffer, 5 + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion, quats[i]);
+                WriteFloat(buffer, 5 + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat, scale[i]);
+            }
+        }
+
+        private int _decodePayloadIndex;
+        private List<Vector3> _decodePoints = new();
+        private List<Quaternion> _decodeQuats = new();
+        private List<float> _decodeScale = new();
+        public void DecodeSerial(byte[] buffer)
+        {
+            if (buffer.Length < 1 + SizeOfInt + SizeOfInt)
+            {
+                Debug.LogError("Invalid payload size.");
+                return;
+            }
+
+            _decodePoints.Clear();
+            _decodeQuats.Clear();
+            _decodeScale.Clear();
+            _decodePayloadIndex = ReadInt(buffer, 1);
+            var numberOfPoints = ReadInt(buffer, 1 + SizeOfInt);
+
+            var isScaled = false;
+            var unscaledPacketLength = 1 + SizeOfInt + SizeOfInt + SizeOfVector3 * numberOfPoints + SizeOfBadQuaternion * numberOfPoints;
+            if (buffer.Length != unscaledPacketLength)
+            {
+                var scaledPacketLength = unscaledPacketLength + SizeOfFloat * numberOfPoints;
+                if (buffer.Length != scaledPacketLength)
+                {
+                    Debug.LogError("Invalid payload size.");
+                    return;
+                }
+                else
+                {
+                    isScaled = true;
+                }
+            }
+
+            for (var i = 0; i < numberOfPoints; i++)
+            {
+                _decodePoints.Add(ReadVector3(buffer, 5 + i * SizeOfVector3));
+                _decodeQuats.Add(ReadBadQuaternion(buffer, 5 + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion));
+                _decodeScale.Add(isScaled
+                    ? ReadFloat(buffer, 5 + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat)
+                    : 1f);
+            }
+        }
+
+        public void WriteInt(byte[] buffer, int offset, int value)
+        {
+            buffer[offset] = (byte)(value >> 24);
+            buffer[offset + 1] = (byte)(value >> 16);
+            buffer[offset + 2] = (byte)(value >> 8);
+            buffer[offset + 3] = (byte)value;
+        }
+
+        public int ReadInt(byte[] buffer, int offset)
+        {
+            return (buffer[offset] << 24) | (buffer[offset + 1] << 16) | (buffer[offset + 2] << 8) | buffer[offset + 3];
+        }
+
+        public void WriteFloat(byte[] buffer, int offset, float value)
+        {
+            var intBits = BitConverter.ToInt32(BitConverter.GetBytes(value), 0);
+            buffer[offset] = (byte)(intBits >> 24);
+            buffer[offset + 1] = (byte)(intBits >> 16);
+            buffer[offset + 2] = (byte)(intBits >> 8);
+            buffer[offset + 3] = (byte)intBits;
+        }
+
+        public float ReadFloat(byte[] buffer, int offset)
+        {
+            var intBits = (buffer[offset] << 24) | (buffer[offset + 1] << 16) | (buffer[offset + 2] << 8) | buffer[offset + 3];
+            return BitConverter.ToSingle(BitConverter.GetBytes(intBits), 0);
+        }
+
+        public void WriteQuantizedFloat01(byte[] buffer, int offset, float value)
+        {
+            var toEncode = Mathf.Clamp01(value) ;
+            buffer[offset] = (byte)(toEncode * 255);
+        }
+
+        public float ReadQuantizedFloat01(byte[] buffer, int offset)
+        {
+            return ReadFloat(buffer, offset) / 255;
+        }
+
+        public void WriteVector3(byte[] buffer, int offset, Vector3 value)
+        {
+            WriteFloat(buffer, offset, value.x);
+            WriteFloat(buffer, offset + 4, value.y);
+            WriteFloat(buffer, offset + 8, value.z);
+        }
+
+        public Vector3 ReadVector3(byte[] buffer, int offset)
+        {
+            return new Vector3(ReadFloat(buffer, offset), ReadFloat(buffer, offset + 4), ReadFloat(buffer, offset + 8));
+        }
+
+        public void WriteBadQuaternion(byte[] buffer, int offset, Quaternion value)
+        {
+            // TODO: Replace this very inefficient encoding with the common quaternion compression technique
+            WriteVector3(buffer, offset, value.eulerAngles);
+        }
+
+        public Quaternion ReadBadQuaternion(byte[] buffer, int offset)
+        {
+            return Quaternion.Euler(ReadVector3(buffer, offset));
         }
 #endregion
     }
