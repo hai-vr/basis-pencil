@@ -579,14 +579,15 @@ namespace Hai.Basis.CilboxPencil
             // return BasisLocalCameraDriver.RightEyePosition(); // ????????????? This always returns the same vector? This contradicts the documentation??????
             // Unity.Mathematics.float3 currentRightEyePosition = BasisEyeTrackingManager.Current.RightEyePosition; // Not working, always returns 0
             var cam = BasisLocalCameraDriver.CameraInstance;
-            if (cam != null && cam.stereoEnabled)
-            {
-                var rightEyeViewMatrix = cam.GetStereoViewMatrix(Camera.StereoscopicEye.Right);
-                var pos = rightEyeViewMatrix.inverse.MultiplyPoint(Vector3.zero);
-                return pos;
-            }
             if (cam != null)
             {
+                if (cam.stereoEnabled)
+                {
+                    var rightEyeViewMatrix = cam.GetStereoViewMatrix(Camera.StereoscopicEye.Right);
+                    var pos = rightEyeViewMatrix.inverse.MultiplyPoint(Vector3.zero);
+                    return pos;
+                }
+
                 return cam.transform.position;
             }
             return Vector3.zero;
