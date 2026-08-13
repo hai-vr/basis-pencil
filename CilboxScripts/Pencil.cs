@@ -110,6 +110,7 @@ namespace Hai.Basis.CilboxPencil
             _network = SafeUtil.MakeNetworkable(this);
             _network.NetworkReady += WhenNetworkReady;
             _network.NetworkMessageReceived += WhenNetworkMessageReceived;
+            _network.PlayerLeft += WhenPlayerLeft;
 
             _defaultTipScale = tip.lossyScale.x;
 

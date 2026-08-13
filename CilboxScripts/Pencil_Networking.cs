@@ -2,6 +2,7 @@
 using System.Collections.Generic;
 using Basis.Network.Core;
 using Basis.Scripts.Networking.Compression;
+using Basis.Scripts.Networking.NetworkedAvatar;
 using UnityEngine;
 using Quaternion = UnityEngine.Quaternion;
 using Random = UnityEngine.Random;
@@ -31,7 +32,8 @@ namespace Hai.Basis.CilboxPencil
         private readonly Dictionary<int, List<Quaternion>> _indxToQuats = new();
         private readonly Dictionary<int, List<float>> _indxScale = new();
 
-        private readonly Dictionary<int, List<ushort>> _indxToPlayerIdCatchup = new();
+        private readonly HashSet<ushort> _playerIdsWhoRequestedInitialization = new();
+        private readonly Dictionary<int, HashSet<ushort>> _indxToPlayerIdCatchup = new();
         private bool _hasPendingCatchup;
         private float _nextCatchupTime = float.MinValue;
 
@@ -69,6 +71,27 @@ namespace Hai.Basis.CilboxPencil
             }
         }
 
+        private void WhenPlayerLeft(BasisNetworkPlayer player)
+        {
+            var thatPlayerExisted = _playerIdsWhoRequestedInitialization.Remove(player.playerId);
+
+            if (!thatPlayerExisted) return;
+
+            var keys = new List<int>(_indxToPlayerIdCatchup.Keys);
+            foreach (var key in keys)
+            {
+                var playerIds = _indxToPlayerIdCatchup[key];
+                if (playerIds.Remove(player.playerId))
+                {
+                    // The count can't be pulled up, as the if() condition above modifies the HashSet.
+                    if (playerIds.Count == 0)
+                    {
+                        _indxToPlayerIdCatchup.Remove(key);
+                    }
+                }
+            }
+        }
+
         private void WhenNetworkMessageReceived(ushort playerID, byte[] buffer, DeliveryMethod deliveryMethod)
         {
             if (buffer.Length == 0) return;
@@ -80,6 +103,14 @@ namespace Hai.Basis.CilboxPencil
                 if (packetId == Packet_C2O_RequestInitialization)
                 {
                     if (_indxToPoints.Count == 0) return; // Nothing has been drawn.
+                    var playerHadAlreadyRequestedInitialization = !_playerIdsWhoRequestedInitialization.Add(playerID);
+                    if (playerHadAlreadyRequestedInitialization)
+                    {
+                        // We want to avoid players asking for initialization multiple times.
+                        // If Basis Props implements locally toggling a prop off and on again, we may have to update this logic.
+                        Debug.LogWarning($"Player {playerID} has sent us a request for initialization, but they've already asked it before. Why?");
+                        return;
+                    }
 
                     _hasPendingCatchup = true;
 
@@ -91,7 +122,7 @@ namespace Hai.Basis.CilboxPencil
                         }
                         else
                         {
-                            _indxToPlayerIdCatchup[indx] = new List<ushort>() { playerID };
+                            _indxToPlayerIdCatchup[indx] = new HashSet<ushort>() { playerID };
                         }
                     }
 
@@ -149,10 +180,13 @@ namespace Hai.Basis.CilboxPencil
                 var indx = pair.Key; // It's really awkward to get the "first key" of a dictionary???
                 var playerIds = pair.Value;
 
+                var playerIdsArray = new ushort[playerIds.Count];
+                playerIds.CopyTo(playerIdsArray);
+
                 _network.SendCustomNetworkEvent(
                     EncodeNewINDX(_beingDrawnPoints, _beingDrawnQuats, _beingDrawnScale),
                     DeliveryMethod.ReliableUnordered,
-                    playerIds.ToArray()
+                    playerIdsArray
                 );
 
                 _indxToPlayerIdCatchup.Remove(indx);

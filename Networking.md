@@ -26,9 +26,15 @@ The owner takes care of adding items to the KV store:
 ## Initialization and late joining
 
 - ✅ When a user loads the prop, they ask the owner to send all data.
-- 🟨 When the owner is asked for all data by a user, they:
+- ✅ When the owner is asked for all data by a user, they:
   - ✅ add the playerId to a Dict<dataIndex, List<playerId>>.
-  - ⬜ add the playerId to a List<playerId> that remembers all playerIds that have loaded the prop.
+  - ✅ add the playerId to a List<playerId> that remembers all playerIds that have loaded the prop.
+
+## Players leaving
+
+When a user leaves the server:
+- ✅ We stop remembering that playerId from the players who loaded the prop.
+- ✅ We scrub that playerId out of the Dict<dataIndex, List<playerId>>
 
 ## New lines are just added to the Dict storage
 
