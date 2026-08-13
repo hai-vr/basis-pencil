@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections;
 using System.Collections.Generic;
 using Basis.Network.Core;
 using Basis.Scripts.Networking.NetworkedAvatar;
@@ -23,14 +24,20 @@ namespace Hai.Basis.CilboxPencil
 
         private const byte Packet_C2O_RequestInitialization = 101;
         private const byte Packet_O2C_NewINDX = 11;
-        private const byte Packet_A2A_Serial = 1;
+        private const byte Packet_O2C_DeleteTempINDX = 19;
+        private const byte Packet_A2A_BeingDrawn = 1;
+        private const byte Packet_A2A_BeingTerminated = 2;
 
         private const float DelayBetweenCatchupsSecondsWhenNoOneIsDrawing = 1 / 30f;
         private const float DelayBetweenCatchupsSecondsWhileSomeoneIsDrawing = 1 / 10f;
 
+        private const int MinimumIndx = 1000;
+        private const int MaximumIndx = 2_000_000_000;
+
         private readonly Dictionary<int, List<Vector3>> _indxToPoints = new();
         private readonly Dictionary<int, List<Quaternion>> _indxToQuats = new();
-        private readonly Dictionary<int, List<float>> _indxScale = new();
+        private readonly Dictionary<int, List<float>> _indxToScale = new();
+        private readonly Dictionary<int, GameObject> _indxToGameObject = new();
 
         private readonly HashSet<ushort> _playerIdsWhoRequestedInitialization = new();
         private readonly Dictionary<int, HashSet<ushort>> _indxToPlayerIdCatchup = new();
@@ -38,22 +45,24 @@ namespace Hai.Basis.CilboxPencil
         private bool _hasPendingCatchup;
         private float _nextCatchupTime = float.MinValue;
 
-        private void Owner_NewINDX()
+        private int _beingDrawnTempIndx;
+
+        private void Owner_NewINDX(List<Vector3> points, List<Quaternion> quats, List<float> scales)
         {
             int indx;
             do
             {
-                indx = Random.Range(1_000, 2147483647);
+                indx = Random.Range(MinimumIndx, MaximumIndx);
             } while (_indxToPoints.ContainsKey(indx));
 
-            _indxToPoints[indx] = new List<Vector3>(_beingDrawnPoints);
-            _indxToQuats[indx] = new List<Quaternion>(_beingDrawnQuats);
-            _indxScale[indx] = new List<float>(_beingDrawnScale);
+            _indxToPoints[indx] = new List<Vector3>(points);
+            _indxToQuats[indx] = new List<Quaternion>(quats);
+            _indxToScale[indx] = new List<float>(scales);
 
             if (_playerIdsWhoRequestedInitialization.Count > 0)
             {
                 _network.SendCustomNetworkEvent(
-                    EncodeNewINDX(indx, _beingDrawnPoints, _beingDrawnQuats, _beingDrawnScale),
+                    EncodeINDXPacketFormat(indx, points, quats, scales, Packet_O2C_NewINDX),
                     DeliveryMethod.ReliableOrdered
                 );
             }
@@ -61,9 +70,41 @@ namespace Hai.Basis.CilboxPencil
             WhenNewINDX(indx);
         }
 
+        private void Any_SubmitBeingDrawn(int startIndex, bool isTerminal)
+        {
+            if (!_isNetworkReady) return;
+
+            if (_beingDrawnNextIndex == 0)
+            {
+                _beingDrawnTempIndx = Random.Range(MinimumIndx, MaximumIndx);
+            }
+
+            var points = new List<Vector3>();
+            var quats = new List<Quaternion>();
+            var scales = new List<float>();
+            for (var i = startIndex; i < _beingDrawnPoints.Count; i++)
+            {
+                points.Add(_beingDrawnPoints[i]);
+                quats.Add(_beingDrawnQuats[i]);
+                scales.Add(_beingDrawnScale[i]);
+            }
+
+            var isLocalOwner = _network.IsLocalOwner();
+            if (!isLocalOwner
+                // The owner does not send the termination packet, as they can just send the finished line.
+                || !isTerminal)
+            {
+                _network.SendCustomNetworkEvent(
+                    EncodeINDXPacketFormat(_beingDrawnTempIndx, points, quats, scales, isTerminal ? Packet_A2A_BeingTerminated : Packet_A2A_BeingDrawn),
+                    DeliveryMethod.ReliableOrdered
+                );
+            }
+        }
+
         private void WhenNewINDX(int indx)
         {
-            BuildMeshImmediate(indx, _indxToPoints[indx], _indxToQuats[indx], _indxScale[indx]);
+            var go = BuildMeshImmediate(indx, _indxToPoints[indx], _indxToQuats[indx], _indxToScale[indx]);
+            _indxToGameObject[indx] = go;
         }
 
         private void WhenNetworkReady()
@@ -123,14 +164,17 @@ namespace Hai.Basis.CilboxPencil
 
                         foreach (var indx in _indxToPoints.Keys)
                         {
-                            if (_indxToPlayerIdCatchup.TryGetValue(indx, out var playerIds))
+                            if (indx >= MinimumIndx && indx < MaximumIndx)
                             {
-                                playerIds.Add(playerID);
-                            }
-                            else
-                            {
-                                _indxToPlayerIdCatchup[indx] = new HashSet<ushort>() { playerID };
-                                _indxToCatchUp.Enqueue(indx); // We put in a queue, so that if Player B joins a few seconds after Player A, then we won't stall Player A's progress while still providing Player B with progress.
+                                if (_indxToPlayerIdCatchup.TryGetValue(indx, out var playerIds))
+                                {
+                                    playerIds.Add(playerID);
+                                }
+                                else
+                                {
+                                    _indxToPlayerIdCatchup[indx] = new HashSet<ushort>() { playerID };
+                                    _indxToCatchUp.Enqueue(indx); // We put in a queue, so that if Player B joins a few seconds after Player A, then we won't stall Player A's progress while still providing Player B with progress.
+                                }
                             }
                         }
                     }
@@ -144,7 +188,13 @@ namespace Hai.Basis.CilboxPencil
                 {
                     if (packetId == Packet_O2C_NewINDX)
                     {
-                        DecodeNewINDX(buffer);
+                        DecodeINDXPacketFormat(buffer);
+                        if (_decodeNewINDX_INDX >= MinimumIndx && _decodeNewINDX_INDX < MaximumIndx)
+                        {
+                            Debug.LogWarning($"Received a {packetId} message from {playerID}, but the INDX is {_decodeNewINDX_INDX}, which is outside the range of valid INDXs.");
+                            return;
+                        }
+
                         Debug.Log($"Received INDX message from {playerID}, INDX is {_decodeNewINDX_INDX} and there are {_decodeNewINDX_Points.Count} points.");
 
                         // ReSharper disable once CanSimplifyDictionaryLookupWithTryAdd
@@ -152,7 +202,7 @@ namespace Hai.Basis.CilboxPencil
                         {
                             _indxToPoints[_decodeNewINDX_INDX] = _decodeNewINDX_Points;
                             _indxToQuats[_decodeNewINDX_INDX] = _decodeNewINDX_Quats;
-                            _indxScale[_decodeNewINDX_INDX] = _decodeNewINDX_Scale;
+                            _indxToScale[_decodeNewINDX_INDX] = _decodeNewINDX_Scale;
                             WhenNewINDX(_decodeNewINDX_INDX);
                         }
                         else
@@ -164,9 +214,33 @@ namespace Hai.Basis.CilboxPencil
                 }
             }
 
-            if (packetId == Packet_A2A_Serial)
+            if (packetId == Packet_A2A_BeingDrawn || packetId == Packet_A2A_BeingTerminated)
             {
-                return;
+                DecodeINDXPacketFormat(buffer);
+                if (_decodeNewINDX_INDX >= MinimumIndx && _decodeNewINDX_INDX < MaximumIndx)
+                {
+                    Debug.LogWarning($"Received a {packetId} message from {playerID}, but the INDX is {_decodeNewINDX_INDX}, which is outside the range of valid INDXs.");
+                    return;
+                }
+
+                var negativeIndx = -_decodeNewINDX_INDX;
+                if (_indxToPoints.ContainsKey(_decodeNewINDX_INDX))
+                {
+                    _indxToPoints[negativeIndx].AddRange(_decodeNewINDX_Points);
+                    _indxToQuats[negativeIndx].AddRange(_decodeNewINDX_Quats);
+                    _indxToScale[negativeIndx].AddRange(_decodeNewINDX_Scale);
+                }
+                else
+                {
+                    _indxToPoints[negativeIndx] = new List<Vector3>(_decodeNewINDX_Points);
+                    _indxToQuats[negativeIndx] = new List<Quaternion>(_decodeNewINDX_Quats);
+                    _indxToScale[negativeIndx] = new List<float>(_decodeNewINDX_Scale);
+                }
+
+                if (_network.IsLocalOwner() && packetId == Packet_A2A_BeingTerminated)
+                {
+                    Owner_NewINDX(_beingDrawnPoints, this._beingDrawnQuats, _beingDrawnScale);
+                }
             }
         }
 
@@ -210,7 +284,7 @@ namespace Hai.Basis.CilboxPencil
 
                 var points = _indxToPoints[indx];
                 _network.SendCustomNetworkEvent(
-                    EncodeNewINDX(indx, points, _indxToQuats[indx], _indxScale[indx]),
+                    EncodeINDXPacketFormat(indx, points, _indxToQuats[indx], _indxToScale[indx], Packet_O2C_NewINDX),
                     DeliveryMethod.ReliableUnordered,
                     playerIdsArray
                 );
@@ -224,7 +298,7 @@ namespace Hai.Basis.CilboxPencil
             } while (pointsBudget > 0 && lineBudget > 0 && _indxToPlayerIdCatchup.Count > 0);
         }
 
-        private byte[] EncodeNewINDX(int indx, List<Vector3> points, List<Quaternion> quats, List<float> scale)
+        private byte[] EncodeINDXPacketFormat(int indx, List<Vector3> points, List<Quaternion> quats, List<float> scale, byte packetType)
         {
             var numberOfPoints = points.Count;
             if (numberOfPoints != quats.Count || numberOfPoints != scale.Count)
@@ -242,7 +316,7 @@ namespace Hai.Basis.CilboxPencil
               + SizeOfFloat * numberOfPoints // Scale
             ];
 
-            buffer[0] = Packet_O2C_NewINDX;
+            buffer[0] = packetType;
             WriteInt(buffer, 1, indx);
             WriteInt(buffer, 1 + SizeOfInt, numberOfPoints);
             var start = 1 + SizeOfInt + SizeOfInt;
@@ -261,7 +335,7 @@ namespace Hai.Basis.CilboxPencil
         private List<Vector3> _decodeNewINDX_Points = new();
         private List<Quaternion> _decodeNewINDX_Quats = new();
         private List<float> _decodeNewINDX_Scale = new();
-        private void DecodeNewINDX(byte[] buffer)
+        private void DecodeINDXPacketFormat(byte[] buffer)
         {
             var start = 1 + SizeOfInt + SizeOfInt;
             if (buffer.Length < start)

@@ -20,6 +20,8 @@ namespace Hai.Basis.CilboxPencil
         private const float CommitThresholdAngleDeg = 15f;
         private const float ColinearityThreshold = 0.9994f; // An angle of 2 degrees (goes in both directions, therefore it should be making a cone of 4 degrees in total)
 
+        private const int NumberOfPointsThresholdBeforeSplitting = 200; // Note: This is not the maximum number of points in a line.
+
         // Framerate Interpolation
         private const float TooFarThresholdDistance = 0.03f;
         private const float TooFarThresholdDistanceSquared = TooFarThresholdDistance * TooFarThresholdDistance;
@@ -95,8 +97,8 @@ namespace Hai.Basis.CilboxPencil
 
         // Networking
         private BasisNetworkShim _network;
-        private bool _networkHasUnsentLines;
         private bool _isNetworkReady;
+        private int _beingDrawnNextIndex;
         private readonly List<Vector3> _beingDrawnPoints = new();
         private readonly List<Quaternion> _beingDrawnQuats = new();
         private readonly List<float> _beingDrawnScale = new();
@@ -148,7 +150,7 @@ namespace Hai.Basis.CilboxPencil
         private void Update()
         {
             UpdateWhilePickedUpAndTriggerIsNotPressed();
-            if (_network.IsLocalOwner())
+            if (_isNetworkReady && _network.IsLocalOwner())
             {
                 Update_Owner_NetCatchup();
             }
@@ -267,7 +269,7 @@ namespace Hai.Basis.CilboxPencil
             }
         }
 
-        private void BuildMeshImmediate(int indx, List<Vector3> points, List<Quaternion> quats, List<float> scales)
+        private GameObject BuildMeshImmediate(int indx, List<Vector3> points, List<Quaternion> quats, List<float> scales)
         {
             var currentVerts = new List<Vector3>();
             var currentNormals = new List<Vector3>();
@@ -355,10 +357,19 @@ namespace Hai.Basis.CilboxPencil
             holder.transform.localScale = Vector3.one;
             holder.name = $"INDX-{indx}";
             holder.SetActive(true);
+
+            return holder;
         }
 
         private void StartOrContinue(Vector3 tipPosition, Quaternion tipRotation, bool forceCommit = false)
         {
+            if (!forceCommit && _beingDrawnPoints.Count > NumberOfPointsThresholdBeforeSplitting)
+            {
+                // Note: This probably messes up interpolation at the split if there is any, as we lose track of the previous points.
+                Terminate(tipPosition, tipRotation);
+                Debug.Log("Too many points, starting a new line.");
+            }
+
             var mustCommit = forceCommit || !_hasPreviousPoint || IsAngleDifferentEnoughFromPrevious(tipRotation);
             var isCommitCausedByNonColinearity = false;
             if (!mustCommit)
@@ -449,7 +460,10 @@ namespace Hai.Basis.CilboxPencil
                 _beingDrawnQuats.Add(tipRotation);
                 _beingDrawnScale.Add(_tipScale);
 
-                _networkHasUnsentLines = true;
+                Any_SubmitBeingDrawn(_beingDrawnNextIndex, false);
+
+                _beingDrawnNextIndex = _beingDrawnPoints.Count;
+
                 _previousPreviousCommittedPoint = _previouslyCommittedPoint; // Just because this executes doesn't mean we actually had a previous committed point.
                 _hasPreviousPreviousPoint = _hasPreviousPoint;
                 _previouslyCommittedPoint = tipPosition;
@@ -551,21 +565,19 @@ namespace Hai.Basis.CilboxPencil
             _beingDrawnPoints.Add(tipPosition);
             _beingDrawnQuats.Add(tipRotation);
             _beingDrawnScale.Add(_tipScale);
-            // --------------
+
+            // Order matters
+            Any_SubmitBeingDrawn(_beingDrawnNextIndex, true);
+            _beingDrawnNextIndex = 0;
+
             if (_network.IsLocalOwner())
             {
-                Owner_NewINDX();
+                Owner_NewINDX(_beingDrawnPoints, _beingDrawnQuats, _beingDrawnScale);
             }
-            else
-            {
-                // TODO: We still need to submit the line terminator.
-            }
-            // --------------
+
             _beingDrawnPoints.Clear();
             _beingDrawnQuats.Clear();
             _beingDrawnScale.Clear();
-
-            _networkHasUnsentLines = true;
 
             _hasPreviousPoint = false;
             _hasPreviousPreviousPoint = false;
