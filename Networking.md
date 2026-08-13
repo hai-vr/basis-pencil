@@ -25,10 +25,10 @@ The owner takes care of adding items to the KV store:
 
 ## Initialization and late joining
 
-- ⬜ When a user loads the prop, they ask the owner to send all data.
-- ⬜ When the owner is asked for all data by a user, they:
-  - add the playerId to a Dict<dataIndex, List<playerId>>.
-  - add the playerId to a List<playerId> that remembers all playerIds that have loaded the prop.
+- ✅ When a user loads the prop, they ask the owner to send all data.
+- 🟨 When the owner is asked for all data by a user, they:
+  - ✅ add the playerId to a Dict<dataIndex, List<playerId>>.
+  - ⬜ add the playerId to a List<playerId> that remembers all playerIds that have loaded the prop.
 
 ## New lines are just added to the Dict storage
 
@@ -44,7 +44,7 @@ Then:
 
 ## The owner network loop
 
-- ⬜ The owner loops over time:
-    - through all non-empty dataIndex in the Dict, prioritizing using the List<dataIndex> if it is not empty,
-    - send a Reliable Non-Ordered packet of that dataIndex to those playerIds as recipients,
-    - empty that dataIndex from that Dict.
+- 🟨 The owner loops over time:
+    - ⬜ through all non-empty dataIndex in the Dict, prioritizing using the List<dataIndex> if it is not empty,
+    - ✅ send a Reliable Non-Ordered packet of that dataIndex to those playerIds as recipients,
+    - ✅ empty that dataIndex from that Dict.

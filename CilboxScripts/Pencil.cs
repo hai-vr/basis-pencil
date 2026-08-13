@@ -93,7 +93,7 @@ namespace Hai.Basis.CilboxPencil
 
         // Networking
         private BasisNetworkShim _network;
-        private bool _needsNetworkUpdate;
+        private bool _networkHasUnsentLines;
         private bool _isNetworkReady;
         private readonly List<Vector3> _beingDrawnPoints = new();
         private readonly List<Quaternion> _beingDrawnQuats = new();
@@ -145,6 +145,10 @@ namespace Hai.Basis.CilboxPencil
         private void Update()
         {
             UpdateWhilePickedUpAndTriggerIsNotPressed();
+            if (_network.IsLocalOwner())
+            {
+                Update_Owner_NetCatchup();
+            }
         }
 
         private void UpdateWhilePickedUpAndTriggerIsNotPressed()
@@ -440,7 +444,7 @@ namespace Hai.Basis.CilboxPencil
                 _beingDrawnQuats.Add(tipRotation);
                 _beingDrawnScale.Add(_tipScale);
 
-                _needsNetworkUpdate = true;
+                _networkHasUnsentLines = true;
                 _previousPreviousCommittedPoint = _previouslyCommittedPoint; // Just because this executes doesn't mean we actually had a previous committed point.
                 _hasPreviousPreviousPoint = _hasPreviousPoint;
                 _previouslyCommittedPoint = tipPosition;
@@ -555,7 +559,7 @@ namespace Hai.Basis.CilboxPencil
             _beingDrawnQuats.Clear();
             _beingDrawnScale.Clear();
 
-            _needsNetworkUpdate = true;
+            _networkHasUnsentLines = true;
 
             _hasPreviousPoint = false;
             _hasPreviousPreviousPoint = false;
