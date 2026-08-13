@@ -158,7 +158,7 @@ namespace Hai.Basis.CilboxPencil
 
         private void UpdateWhilePickedUpAndTriggerIsNotPressed()
         {
-            if (!_cannotExecutePressingOnCollider) return; // This is usually true when the user is pressing the trigger.
+            if (_cannotExecutePressingOnCollider) return; // This is usually true when the user is pressing the trigger.
 
             var needToUnpressCollider = false;
             if (_isPickedUp)
