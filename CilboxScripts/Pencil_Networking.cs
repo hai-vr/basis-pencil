@@ -191,19 +191,37 @@ namespace Hai.Basis.CilboxPencil
                 return;
             }
 
-            var indx = _indxToCatchUp.Dequeue();
-            var playerIds = _indxToPlayerIdCatchup[indx];
+            // Increasing the budget could exceed the Cilbox limit.
+            var lineBudget = 20;
+            var pointsBudget = 200;
+            var isFirst = true;
+            do
+            {
+                if (!isFirst && pointsBudget - _indxToPoints[_indxToCatchUp.Peek()].Count < 0)
+                {
+                    break;
+                }
 
-            var playerIdsArray = new ushort[playerIds.Count];
-            playerIds.CopyTo(playerIdsArray);
+                var indx = _indxToCatchUp.Dequeue();
+                var playerIds = _indxToPlayerIdCatchup[indx];
 
-            _network.SendCustomNetworkEvent(
-                EncodeNewINDX(indx, _indxToPoints[indx], _indxToQuats[indx], _indxScale[indx]),
-                DeliveryMethod.ReliableUnordered,
-                playerIdsArray
-            );
+                var playerIdsArray = new ushort[playerIds.Count];
+                playerIds.CopyTo(playerIdsArray);
 
-            _indxToPlayerIdCatchup.Remove(indx);
+                var points = _indxToPoints[indx];
+                _network.SendCustomNetworkEvent(
+                    EncodeNewINDX(indx, points, _indxToQuats[indx], _indxScale[indx]),
+                    DeliveryMethod.ReliableUnordered,
+                    playerIdsArray
+                );
+
+                _indxToPlayerIdCatchup.Remove(indx);
+
+                pointsBudget -= points.Count;
+                lineBudget--;
+                isFirst = false;
+
+            } while (pointsBudget > 0 && lineBudget > 0 && _indxToPlayerIdCatchup.Count > 0);
         }
 
         private byte[] EncodeNewINDX(int indx, List<Vector3> points, List<Quaternion> quats, List<float> scale)
