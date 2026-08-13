@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections;
 using System.Collections.Generic;
 using Basis.Network.Core;
 using Basis.Scripts.Networking.NetworkedAvatar;
@@ -189,7 +188,7 @@ namespace Hai.Basis.CilboxPencil
                     if (packetId == Packet_O2C_NewINDX)
                     {
                         DecodeINDXPacketFormat(buffer);
-                        if (_decodeNewINDX_INDX >= MinimumIndx && _decodeNewINDX_INDX < MaximumIndx)
+                        if (_decodeNewINDX_INDX < MinimumIndx || _decodeNewINDX_INDX >= MaximumIndx)
                         {
                             Debug.LogWarning($"Received a {packetId} message from {playerID}, but the INDX is {_decodeNewINDX_INDX}, which is outside the range of valid INDXs.");
                             return;
@@ -217,14 +216,14 @@ namespace Hai.Basis.CilboxPencil
             if (packetId == Packet_A2A_BeingDrawn || packetId == Packet_A2A_BeingTerminated)
             {
                 DecodeINDXPacketFormat(buffer);
-                if (_decodeNewINDX_INDX >= MinimumIndx && _decodeNewINDX_INDX < MaximumIndx)
+                if (_decodeNewINDX_INDX < MinimumIndx || _decodeNewINDX_INDX >= MaximumIndx)
                 {
                     Debug.LogWarning($"Received a {packetId} message from {playerID}, but the INDX is {_decodeNewINDX_INDX}, which is outside the range of valid INDXs.");
                     return;
                 }
 
                 var negativeIndx = -_decodeNewINDX_INDX;
-                if (_indxToPoints.ContainsKey(_decodeNewINDX_INDX))
+                if (_indxToPoints.ContainsKey(negativeIndx))
                 {
                     _indxToPoints[negativeIndx].AddRange(_decodeNewINDX_Points);
                     _indxToQuats[negativeIndx].AddRange(_decodeNewINDX_Quats);
@@ -239,7 +238,10 @@ namespace Hai.Basis.CilboxPencil
 
                 if (_network.IsLocalOwner() && packetId == Packet_A2A_BeingTerminated)
                 {
-                    Owner_NewINDX(_beingDrawnPoints, this._beingDrawnQuats, _beingDrawnScale);
+                    Owner_NewINDX(_indxToPoints[negativeIndx], _indxToQuats[negativeIndx], _indxToScale[negativeIndx]);
+                    _indxToPoints.Remove(negativeIndx);
+                    _indxToQuats.Remove(negativeIndx);
+                    _indxToScale.Remove(negativeIndx);
                 }
             }
         }
