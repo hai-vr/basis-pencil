@@ -32,6 +32,7 @@ namespace Hai.Basis.CilboxPencil
         private const float PressingOnColliderNormalBackawayDistance = 0.0001f;
 
         // ForcedPerspective mode
+        private const float WorldSpaceEyePokeDistanceThreshold = 0.15f;
         private const int ForcedPerspectiveRaycastMask = ~((1 << 2) | (1 << 3) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 10) | (1 << 11)); // Same as PressingOnCollider but we allow the two UI layers
         private const int WantsForcePerspective_None = 0;
         private const int WantsForcePerspective_Left = 1;
@@ -163,11 +164,11 @@ namespace Hai.Basis.CilboxPencil
                 // Detect when the user is poking their dominant eye.
                 if (option_PokeDominantEyeToUseForcedPerspectiveRaycast && _userWantsForcePerspective_None_Left_Right == WantsForcePerspective_None)
                 {
-                    if (Vector3.Distance(FetchEyePositionInWorldSpace(WantsForcePerspective_Right), tip.position) < 0.15f)
+                    if (Vector3.Distance(FetchEyePositionInWorldSpace(WantsForcePerspective_Right), tip.position) < WorldSpaceEyePokeDistanceThreshold)
                     {
                         _userWantsForcePerspective_None_Left_Right = WantsForcePerspective_Right;
                     }
-                    else if (Vector3.Distance(FetchEyePositionInWorldSpace(WantsForcePerspective_Left), tip.position) < 0.15f)
+                    else if (Vector3.Distance(FetchEyePositionInWorldSpace(WantsForcePerspective_Left), tip.position) < WorldSpaceEyePokeDistanceThreshold)
                     {
                         _userWantsForcePerspective_None_Left_Right = WantsForcePerspective_Left;
                     }

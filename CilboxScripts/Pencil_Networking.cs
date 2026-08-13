@@ -25,7 +25,8 @@ namespace Hai.Basis.CilboxPencil
         private const byte Packet_O2C_NewINDX = 11;
         private const byte Packet_A2A_Serial = 1;
 
-        private const float DelayBetweenCatchupsSeconds = 0.1f;
+        private const float DelayBetweenCatchupsSecondsWhenNoOneIsDrawing = 1 / 30f;
+        private const float DelayBetweenCatchupsSecondsWhileSomeoneIsDrawing = 1 / 10f;
 
         private readonly Dictionary<int, List<Vector3>> _indxToPoints = new();
         private readonly Dictionary<int, List<Quaternion>> _indxToQuats = new();
@@ -33,6 +34,7 @@ namespace Hai.Basis.CilboxPencil
 
         private readonly HashSet<ushort> _playerIdsWhoRequestedInitialization = new();
         private readonly Dictionary<int, HashSet<ushort>> _indxToPlayerIdCatchup = new();
+        private readonly Queue<int> _indxToCatchUp = new(); // TODO: This should be a queue, but I'm not sure it's in Cilbox
         private bool _hasPendingCatchup;
         private float _nextCatchupTime = float.MinValue;
 
@@ -128,6 +130,7 @@ namespace Hai.Basis.CilboxPencil
                             else
                             {
                                 _indxToPlayerIdCatchup[indx] = new HashSet<ushort>() { playerID };
+                                _indxToCatchUp.Enqueue(indx); // We put in a queue, so that if Player B joins a few seconds after Player A, then we won't stall Player A's progress while still providing Player B with progress.
                             }
                         }
                     }
@@ -173,7 +176,7 @@ namespace Hai.Basis.CilboxPencil
             if (Time.time < _nextCatchupTime) return;
 
             // We try to interleave real lines being drawn with catchups.
-            _nextCatchupTime = Time.time + DelayBetweenCatchupsSeconds;
+            _nextCatchupTime = Time.time + DelayBetweenCatchupsSecondsWhenNoOneIsDrawing;
 
             if (_indxToPlayerIdCatchup.Count == 0)
             {
@@ -181,24 +184,26 @@ namespace Hai.Basis.CilboxPencil
                 return;
             }
 
-            // This isn't a loop
-            foreach (var pair in _indxToPlayerIdCatchup)
+            if (_indxToCatchUp.Count == 0)
             {
-                var indx = pair.Key; // It's really awkward to get the "first key" of a dictionary???
-                var playerIds = pair.Value;
-
-                var playerIdsArray = new ushort[playerIds.Count];
-                playerIds.CopyTo(playerIdsArray);
-
-                _network.SendCustomNetworkEvent(
-                    EncodeNewINDX(indx, _indxToPoints[indx], _indxToQuats[indx], _indxScale[indx]),
-                    DeliveryMethod.ReliableUnordered,
-                    playerIdsArray
-                );
-
-                _indxToPlayerIdCatchup.Remove(indx);
-                return; // It's a bit of a weird foreach, we only need the first key.
+                Debug.LogError("_indxToPlayerIdCatchup is inconsistent with _indxToCatchUp, this shouldn't be happening!!!");
+                _hasPendingCatchup = false;
+                return;
             }
+
+            var indx = _indxToCatchUp.Dequeue();
+            var playerIds = _indxToPlayerIdCatchup[indx];
+
+            var playerIdsArray = new ushort[playerIds.Count];
+            playerIds.CopyTo(playerIdsArray);
+
+            _network.SendCustomNetworkEvent(
+                EncodeNewINDX(indx, _indxToPoints[indx], _indxToQuats[indx], _indxScale[indx]),
+                DeliveryMethod.ReliableUnordered,
+                playerIdsArray
+            );
+
+            _indxToPlayerIdCatchup.Remove(indx);
         }
 
         private byte[] EncodeNewINDX(int indx, List<Vector3> points, List<Quaternion> quats, List<float> scale)

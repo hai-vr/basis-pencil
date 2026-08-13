@@ -29,6 +29,8 @@ The owner takes care of adding items to the KV store:
 - ✅ When the owner is asked for all data by a user, they:
   - ✅ add the playerId to a Dict<dataIndex, List<playerId>>.
   - ✅ add the playerId to a List<playerId> that remembers all playerIds that have loaded the prop.
+- If multiple players join sequentially, then iterating the keys of the drawing is going to restart from the dictionary key ordering.
+  It would be better to sequentially iterate, but "cycle through" instead of starting from the beginning each time, or shuffle
 
 ## Players leaving
 
