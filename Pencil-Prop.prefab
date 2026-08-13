@@ -414,7 +414,7 @@ GameObject:
   - component: {fileID: 7613075954115975871}
   - component: {fileID: 2249819152940901291}
   m_Layer: 8
-  m_Name: PencilHolder
+  m_Name: Pencil-Script
   m_TagString: Untagged
   m_Icon: {fileID: 0}
   m_NavMeshLayer: 0
@@ -447,14 +447,13 @@ MonoBehaviour:
   m_Script: {fileID: 11500000, guid: 292cea01cb5846c39038a07de134ca52, type: 3}
   m_Name: 
   m_EditorClassIdentifier: Assembly-CSharp::HaiHelloBasisWorld.Cilbox.Pencil
+  option_PokeDominantEyeToUseForcedPerspectiveRaycast: 1
   pickup: {fileID: 4426071921389032759}
   tip: {fileID: 7455954937768614675}
-  mainLineRenderer: {fileID: 8753424673529766088}
   modelMover: {fileID: 5908588006618095532}
   instantiateMe: {fileID: 2922961626906723867}
   instantiateMe_Filter: {fileID: 1363931062141000459}
-  instantiateMe_Renderer: {fileID: 7868313664159383040}
-  _currentMeshNullable: {fileID: 0}
+  debug_lineRendererNullable: {fileID: 0}
 --- !u!1 &6229032054248253161
 GameObject:
   m_ObjectHideFlags: 0
@@ -499,7 +498,6 @@ GameObject:
   - component: {fileID: 4299368044723287056}
   - component: {fileID: 1317053312365256470}
   - component: {fileID: 1831096557658287767}
-  - component: {fileID: 3939540324794222113}
   m_Layer: 0
   m_Name: Calibration
   m_TagString: EditorOnly
@@ -579,27 +577,6 @@ MeshRenderer:
   m_SortingOrder: 0
   m_MaskInteraction: 0
   m_AdditionalVertexStreams: {fileID: 0}
---- !u!65 &3939540324794222113
-BoxCollider:
-  m_ObjectHideFlags: 0
-  m_CorrespondingSourceObject: {fileID: 0}
-  m_PrefabInstance: {fileID: 0}
-  m_PrefabAsset: {fileID: 0}
-  m_GameObject: {fileID: 8194691131121810528}
-  m_Material: {fileID: 0}
-  m_IncludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_ExcludeLayers:
-    serializedVersion: 2
-    m_Bits: 0
-  m_LayerOverridePriority: 0
-  m_IsTrigger: 0
-  m_ProvidesContacts: 0
-  m_Enabled: 1
-  serializedVersion: 3
-  m_Size: {x: 1, y: 1, z: 1}
-  m_Center: {x: 0, y: 0, z: 0}
 --- !u!1 &8411488538176320156
 GameObject:
   m_ObjectHideFlags: 0

@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
 using Basis.Network.Core;
-using Basis.Scripts.Networking.Compression;
 using Basis.Scripts.Networking.NetworkedAvatar;
 using UnityEngine;
 using Quaternion = UnityEngine.Quaternion;
@@ -18,9 +17,9 @@ namespace Hai.Basis.CilboxPencil
         private const int SizeOfInt = 4;
         private const int SizeOfUInt = 4;
         private const int SizeOfFloat = 4;
-        private const int SizeOfHalf = 2;
         private const int SizeOfVector3 = 3 * SizeOfFloat;
-        private const int SizeOfQuaternion = SizeOfUInt;
+        private const int SizeOfCompressedQuaternion = SizeOfUInt;
+        private const int SizeOfBadQuaternion = 3 * SizeOfFloat;
 
         private const byte Packet_C2O_RequestInitialization = 101;
         private const byte Packet_O2C_NewINDX = 11;
@@ -49,17 +48,20 @@ namespace Hai.Basis.CilboxPencil
             _indxToQuats[indx] = new List<Quaternion>(_beingDrawnQuats);
             _indxScale[indx] = new List<float>(_beingDrawnScale);
 
-            _network.SendCustomNetworkEvent(
-                EncodeNewINDX(_beingDrawnPoints, _beingDrawnQuats, _beingDrawnScale),
-                DeliveryMethod.ReliableOrdered
-            );
+            if (_playerIdsWhoRequestedInitialization.Count > 0)
+            {
+                _network.SendCustomNetworkEvent(
+                    EncodeNewINDX(indx, _beingDrawnPoints, _beingDrawnQuats, _beingDrawnScale),
+                    DeliveryMethod.ReliableOrdered
+                );
+            }
 
             WhenNewINDX(indx);
         }
 
         private void WhenNewINDX(int indx)
         {
-            BuildMeshImmediate(_indxToPoints[indx], _indxToQuats[indx], _indxScale[indx]);
+            BuildMeshImmediate(indx, _indxToPoints[indx], _indxToQuats[indx], _indxScale[indx]);
         }
 
         private void WhenNetworkReady()
@@ -67,6 +69,7 @@ namespace Hai.Basis.CilboxPencil
             _isNetworkReady = true;
             if (!_network.IsLocalOwner())
             {
+                Debug.Log($"Sending {Packet_C2O_RequestInitialization} to {_network.CurrentOwnerId}");
                 _network.SendCustomNetworkEvent(new []{ Packet_C2O_RequestInitialization }, DeliveryMethod.ReliableOrdered, new []{ _network.CurrentOwnerId });
             }
         }
@@ -102,7 +105,7 @@ namespace Hai.Basis.CilboxPencil
             {
                 if (packetId == Packet_C2O_RequestInitialization)
                 {
-                    if (_indxToPoints.Count == 0) return; // Nothing has been drawn.
+                    Debug.Log($"Received {Packet_C2O_RequestInitialization} from {playerID}");
                     var playerHadAlreadyRequestedInitialization = !_playerIdsWhoRequestedInitialization.Add(playerID);
                     if (playerHadAlreadyRequestedInitialization)
                     {
@@ -112,17 +115,20 @@ namespace Hai.Basis.CilboxPencil
                         return;
                     }
 
-                    _hasPendingCatchup = true;
-
-                    foreach (var indx in _indxToPoints.Keys)
+                    if (_indxToPoints.Count > 0)
                     {
-                        if (_indxToPlayerIdCatchup.TryGetValue(indx, out var playerIds))
+                        _hasPendingCatchup = true;
+
+                        foreach (var indx in _indxToPoints.Keys)
                         {
-                            playerIds.Add(playerID);
-                        }
-                        else
-                        {
-                            _indxToPlayerIdCatchup[indx] = new HashSet<ushort>() { playerID };
+                            if (_indxToPlayerIdCatchup.TryGetValue(indx, out var playerIds))
+                            {
+                                playerIds.Add(playerID);
+                            }
+                            else
+                            {
+                                _indxToPlayerIdCatchup[indx] = new HashSet<ushort>() { playerID };
+                            }
                         }
                     }
 
@@ -136,6 +142,7 @@ namespace Hai.Basis.CilboxPencil
                     if (packetId == Packet_O2C_NewINDX)
                     {
                         DecodeNewINDX(buffer);
+                        Debug.Log($"Received INDX message from {playerID}, INDX is {_decodeNewINDX_INDX} and there are {_decodeNewINDX_Points.Count} points.");
 
                         // ReSharper disable once CanSimplifyDictionaryLookupWithTryAdd
                         if (!_indxToPoints.ContainsKey(_decodeNewINDX_INDX))
@@ -184,7 +191,7 @@ namespace Hai.Basis.CilboxPencil
                 playerIds.CopyTo(playerIdsArray);
 
                 _network.SendCustomNetworkEvent(
-                    EncodeNewINDX(_beingDrawnPoints, _beingDrawnQuats, _beingDrawnScale),
+                    EncodeNewINDX(indx, _indxToPoints[indx], _indxToQuats[indx], _indxScale[indx]),
                     DeliveryMethod.ReliableUnordered,
                     playerIdsArray
                 );
@@ -194,7 +201,7 @@ namespace Hai.Basis.CilboxPencil
             }
         }
 
-        private byte[] EncodeNewINDX(List<Vector3> points, List<Quaternion> quats, List<float> scale)
+        private byte[] EncodeNewINDX(int indx, List<Vector3> points, List<Quaternion> quats, List<float> scale)
         {
             var numberOfPoints = points.Count;
             if (numberOfPoints != quats.Count || numberOfPoints != scale.Count)
@@ -208,17 +215,20 @@ namespace Hai.Basis.CilboxPencil
               + SizeOfInt // Payload Index
               + SizeOfInt // NumberOfPoints (TODO: It should be possible to deduce this from the packet size)
               + SizeOfVector3 * numberOfPoints // Points
-              + SizeOfQuaternion * numberOfPoints // Quats
-              + SizeOfHalf * numberOfPoints // Scale
+              + SizeOfBadQuaternion * numberOfPoints // Quats
+              + SizeOfFloat * numberOfPoints // Scale
             ];
 
             buffer[0] = Packet_O2C_NewINDX;
-            WriteInt(buffer, 1, numberOfPoints);
+            WriteInt(buffer, 1, indx);
+            WriteInt(buffer, 1 + SizeOfInt, numberOfPoints);
+            var start = 1 + SizeOfInt + SizeOfInt;
             for (var i = 0; i < numberOfPoints; i++)
             {
-                WriteVector3(buffer, 5 + i * SizeOfVector3, points[i]);
-                WriteQuaternion(buffer, 5 + numberOfPoints * SizeOfVector3 + i * SizeOfQuaternion, quats[i]);
-                WriteHalf(buffer, 5 + numberOfPoints * (SizeOfVector3 + SizeOfQuaternion) + i * SizeOfHalf, scale[i]);
+                WriteVector3(buffer, start + i * SizeOfVector3, points[i]);
+                WriteBadQuaternion(buffer, start + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion, quats[i]);
+                // TODO: We could reduce this to a half, we'll worry about this at another time after everywhing works even without optimizing
+                WriteFloat(buffer, start + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat, scale[i]);
             }
 
             return buffer;
@@ -230,9 +240,10 @@ namespace Hai.Basis.CilboxPencil
         private List<float> _decodeNewINDX_Scale = new();
         private void DecodeNewINDX(byte[] buffer)
         {
-            if (buffer.Length < 1 + SizeOfInt + SizeOfInt)
+            var start = 1 + SizeOfInt + SizeOfInt;
+            if (buffer.Length < start)
             {
-                Debug.LogError("Invalid payload size.");
+                Debug.LogError("Invalid payload size (A).");
                 return;
             }
 
@@ -243,13 +254,13 @@ namespace Hai.Basis.CilboxPencil
             var numberOfPoints = ReadInt(buffer, 1 + SizeOfInt);
 
             var isScaled = false;
-            var unscaledPacketLength = 1 + SizeOfInt + SizeOfInt + SizeOfVector3 * numberOfPoints + SizeOfQuaternion * numberOfPoints;
+            var unscaledPacketLength = start + SizeOfVector3 * numberOfPoints + SizeOfBadQuaternion * numberOfPoints;
             if (buffer.Length != unscaledPacketLength)
             {
-                var scaledPacketLength = unscaledPacketLength + SizeOfHalf * numberOfPoints;
+                var scaledPacketLength = unscaledPacketLength + SizeOfFloat * numberOfPoints;
                 if (buffer.Length != scaledPacketLength)
                 {
-                    Debug.LogError("Invalid payload size.");
+                    Debug.LogError("Invalid payload size (B).");
                     return;
                 }
                 else
@@ -260,11 +271,15 @@ namespace Hai.Basis.CilboxPencil
 
             for (var i = 0; i < numberOfPoints; i++)
             {
-                _decodeNewINDX_Points.Add(ReadVector3(buffer, 5 + i * SizeOfVector3));
-                _decodeNewINDX_Quats.Add(ReadQuaternion(buffer, 5 + numberOfPoints * SizeOfVector3 + i * SizeOfQuaternion));
-                _decodeNewINDX_Scale.Add(isScaled
-                    ? ReadHalf(buffer, 5 + numberOfPoints * (SizeOfVector3 + SizeOfQuaternion) + i * SizeOfHalf)
-                    : 1f);
+                var point = ReadVector3(buffer, start + i * SizeOfVector3);
+                var quat = ReadBadQuaternion(buffer, start + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion);
+                var scale = isScaled
+                    ? ReadFloat(buffer, start + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat)
+                    : 1f;
+
+                _decodeNewINDX_Points.Add(point);
+                _decodeNewINDX_Quats.Add(quat);
+                _decodeNewINDX_Scale.Add(scale);
             }
         }
 
@@ -309,19 +324,6 @@ namespace Hai.Basis.CilboxPencil
             return BitConverter.ToSingle(BitConverter.GetBytes(intBits), 0);
         }
 
-        private void WriteHalf(byte[] buffer, int offset, float value)
-        {
-            var intBits = BitConverter.ToInt16(BitConverter.GetBytes(value), 0);
-            buffer[offset] = (byte)(intBits >> 8);
-            buffer[offset + 1] = (byte)intBits;
-        }
-
-        private float ReadHalf(byte[] buffer, int offset)
-        {
-            var intBits = (buffer[offset] << 8) | buffer[offset + 1];
-            return BitConverter.ToSingle(BitConverter.GetBytes(intBits), 0);
-        }
-
         private void WriteVector3(byte[] buffer, int offset, Vector3 value)
         {
             WriteFloat(buffer, offset, value.x);
@@ -334,16 +336,27 @@ namespace Hai.Basis.CilboxPencil
             return new Vector3(ReadFloat(buffer, offset), ReadFloat(buffer, offset + 4), ReadFloat(buffer, offset + 8));
         }
 
-        private void WriteQuaternion(byte[] buffer, int offset, Quaternion value)
+        // private void WriteQuaternion(byte[] buffer, int offset, Quaternion value)
+        // {
+            // uint compressed = CompressQuaternion(value);
+            // WriteUInt(buffer, offset, compressed);
+        // }
+
+        // private Quaternion ReadQuaternion(byte[] buffer, int offset)
+        // {
+            // uint compressed = ReadUInt(buffer, offset);
+            // return DecompressQuaternion(compressed);
+        // }
+
+        // FIXME: Quaternion compression is not available to Cilbox, and we can't access the xyzw fields of a quaternion either, so we can't compress this for the time being until an upstream PR is opened.
+        private void WriteBadQuaternion(byte[] buffer, int offset, Quaternion value)
         {
-            uint compressed = BasisCompression.QuaternionCompressor.CompressQuaternion(ref value);
-            WriteUInt(buffer, offset, compressed);
+            WriteVector3(buffer, offset, value.eulerAngles);
         }
 
-        private Quaternion ReadQuaternion(byte[] buffer, int offset)
+        private Quaternion ReadBadQuaternion(byte[] buffer, int offset)
         {
-            uint compressed = ReadUInt(buffer, offset);
-            return BasisCompression.QuaternionCompressor.DecompressQuaternion(compressed);
+            return Quaternion.Euler(ReadVector3(buffer, offset));
         }
     }
 }

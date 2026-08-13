@@ -54,3 +54,7 @@ Then:
     - ⬜ through all non-empty dataIndex in the Dict, prioritizing using the List<dataIndex> if it is not empty,
     - ✅ send a Reliable Non-Ordered packet of that dataIndex to those playerIds as recipients,
     - ✅ empty that dataIndex from that Dict.
+
+## Ownership transfer
+
+If there is an ownership transfer, catch-up may be incomplete. Figure out what to do from there.

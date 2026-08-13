@@ -1,5 +1,5 @@
-﻿#define PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS
-#define BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS
+﻿// #define PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS
+// #define BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS
 
 using System.Collections.Generic;
 using Basis;
@@ -67,6 +67,7 @@ namespace Hai.Basis.CilboxPencil
         private bool _hasPreviousPreviousPoint;
         private Vector3 _previousPreviousCommittedPoint;
         private Quaternion _previouslyCommittedQuat = Quaternion.identity;
+        private float _previouslyCommittedTipScale;
 
         // New line rendering
         private float _tipScale;
@@ -265,7 +266,7 @@ namespace Hai.Basis.CilboxPencil
             }
         }
 
-        private void BuildMeshImmediate(List<Vector3> points, List<Quaternion> quats, List<float> scales)
+        private void BuildMeshImmediate(int indx, List<Vector3> points, List<Quaternion> quats, List<float> scales)
         {
             var currentVerts = new List<Vector3>();
             var currentNormals = new List<Vector3>();
@@ -288,7 +289,6 @@ namespace Hai.Basis.CilboxPencil
                     currentVerts.Add(tipPosition + tipRotation * (new Vector3(-1, 0f, 0) * tipScale));
                     boundsMin = currentVerts[0];
                     boundsMax = currentVerts[3];
-                    currentTris.Clear();
                     currentTris.Add(0); currentTris.Add(1); currentTris.Add(2);
                     currentTris.Add(3); currentTris.Add(2); currentTris.Add(1);
                     var normal = tipRotation * -Vector3.forward;
@@ -336,7 +336,8 @@ namespace Hai.Basis.CilboxPencil
             mesh.SetNormals(currentNormals);
             mesh.SetTriangles(currentTris, 0);
 
-            var bounds = new Bounds(boundsMin + (boundsMax - boundsMin) * 0.5f, boundsMax - boundsMin);
+            var bounds = new Bounds(boundsMin + (boundsMax - boundsMin) * 0.5f, boundsMax - boundsMin); // Doesn't work???? that gives a bounds size of zero
+            mesh.bounds = bounds;
 
             GameObject holder;
             {
@@ -351,6 +352,7 @@ namespace Hai.Basis.CilboxPencil
 
             holder.transform.SetPositionAndRotation(Vector3.zero, Quaternion.identity);
             holder.transform.localScale = Vector3.one;
+            holder.name = $"INDX-{indx}";
             holder.SetActive(true);
         }
 
@@ -429,10 +431,11 @@ namespace Hai.Basis.CilboxPencil
 
                         var virtualPosition = SeilerInterpolate(b0, b3, s1, s2, t);
                         var virtualRotation = Quaternion.Slerp(quatFrom, tipRotation, t);
+                        var virtualTipScale = Mathf.Lerp(_previouslyCommittedTipScale, _tipScale, t);
 
                         _beingDrawnPoints.Add(virtualPosition);
                         _beingDrawnQuats.Add(virtualRotation);
-                        _beingDrawnScale.Add(1f);
+                        _beingDrawnScale.Add(virtualTipScale);
 
                         InitializeOrAddTwoVerticesToMesh(virtualPosition, tipRotation, false);
                         k++;
@@ -450,6 +453,7 @@ namespace Hai.Basis.CilboxPencil
                 _hasPreviousPreviousPoint = _hasPreviousPoint;
                 _previouslyCommittedPoint = tipPosition;
                 _previouslyCommittedQuat = tipRotation;
+                _previouslyCommittedTipScale = _tipScale;
 
                 InitializeOrAddTwoVerticesToMesh(tipPosition, tipRotation, true);
 
