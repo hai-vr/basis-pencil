@@ -23,7 +23,7 @@ namespace Hai.Basis.CilboxPencil
 
         private const byte Packet_C2O_RequestInitialization = 101;
         private const byte Packet_O2C_NewINDX = 11;
-        private const byte Packet_O2C_DeleteTempINDX = 19;
+        private const byte Packet_O2C_DeleteBeingDrawnINDX = 19;
         private const byte Packet_A2A_BeingDrawn = 1;
         private const byte Packet_A2A_BeingTerminated = 2;
 
@@ -46,7 +46,7 @@ namespace Hai.Basis.CilboxPencil
 
         private int _beingDrawnTempIndx;
 
-        private void Owner_NewINDX(List<Vector3> points, List<Quaternion> quats, List<float> scales)
+        private void Owner_NewINDX(List<Vector3> points, List<Quaternion> quats, List<float> scales, int tempIndxOrZero)
         {
             int indx;
             do
@@ -64,6 +64,17 @@ namespace Hai.Basis.CilboxPencil
                     EncodeINDXPacketFormat(indx, points, quats, scales, Packet_O2C_NewINDX),
                     DeliveryMethod.ReliableOrdered
                 );
+
+                if (tempIndxOrZero > 0)
+                {
+                    var packet = new byte[1 + SizeOfInt];
+                    packet[0] = Packet_O2C_DeleteBeingDrawnINDX;
+                    WriteInt(packet, 1, tempIndxOrZero);
+                    _network.SendCustomNetworkEvent(
+                        packet,
+                        DeliveryMethod.ReliableOrdered
+                    );
+                }
             }
 
             WhenNewINDX(indx);
@@ -210,6 +221,33 @@ namespace Hai.Basis.CilboxPencil
                             // this might not be an error, but we need to make sure not to build the mesh twice.
                         }
                     }
+                    else if (packetId == Packet_O2C_DeleteBeingDrawnINDX)
+                    {
+                        if (buffer.Length != 1 + SizeOfInt)
+                        {
+                            Debug.LogWarning($"Received a {packetId} message from {playerID}, but the payload size is invalid.");
+                            return;
+                        }
+
+                        var tempIndx = ReadInt(buffer, 1);
+                        if (tempIndx < MinimumIndx || tempIndx >= MaximumIndx)
+                        {
+                            Debug.LogWarning($"Received a {packetId} message from {playerID}, but the INDX is {tempIndx}, which is outside the range of valid INDXs.");
+                            return;
+                        }
+
+                        var negativeIndx = -tempIndx;
+                        if (_indxToGameObject.ContainsKey(negativeIndx))
+                        {
+                            _indxToPoints.Remove(negativeIndx);
+                            _indxToQuats.Remove(negativeIndx);
+                            _indxToScale.Remove(negativeIndx);
+
+                            Destroy(_indxToGameObject[negativeIndx]);
+                            _indxToGameObject.Remove(negativeIndx);
+                            _detetedNegativeIndxs.Add(negativeIndx);
+                        }
+                    }
                 }
             }
 
@@ -223,6 +261,11 @@ namespace Hai.Basis.CilboxPencil
                 }
 
                 var negativeIndx = -_decodeNewINDX_INDX;
+                if (_detetedNegativeIndxs.Contains(negativeIndx))
+                {
+                    return;
+                }
+
                 if (_indxToPoints.ContainsKey(negativeIndx))
                 {
                     _indxToPoints[negativeIndx].AddRange(_decodeNewINDX_Points);
@@ -236,12 +279,22 @@ namespace Hai.Basis.CilboxPencil
                     _indxToScale[negativeIndx] = new List<float>(_decodeNewINDX_Scale);
                 }
 
+                if (_indxToGameObject.ContainsKey(negativeIndx))
+                {
+                    Destroy(_indxToGameObject[negativeIndx]);
+                    _indxToGameObject.Remove(negativeIndx);
+                }
+
                 if (_network.IsLocalOwner() && packetId == Packet_A2A_BeingTerminated)
                 {
-                    Owner_NewINDX(_indxToPoints[negativeIndx], _indxToQuats[negativeIndx], _indxToScale[negativeIndx]);
+                    Owner_NewINDX(_indxToPoints[negativeIndx], _indxToQuats[negativeIndx], _indxToScale[negativeIndx], _decodeNewINDX_INDX);
                     _indxToPoints.Remove(negativeIndx);
                     _indxToQuats.Remove(negativeIndx);
                     _indxToScale.Remove(negativeIndx);
+                }
+                else
+                {
+                    WhenNewINDX(negativeIndx);
                 }
             }
         }
@@ -337,6 +390,8 @@ namespace Hai.Basis.CilboxPencil
         private List<Vector3> _decodeNewINDX_Points = new();
         private List<Quaternion> _decodeNewINDX_Quats = new();
         private List<float> _decodeNewINDX_Scale = new();
+        private HashSet<int> _detetedNegativeIndxs = new();
+
         private void DecodeINDXPacketFormat(byte[] buffer)
         {
             var start = 1 + SizeOfInt + SizeOfInt;

@@ -1,5 +1,5 @@
-﻿// #define PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS
-// #define BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS
+﻿#define PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS
+#define BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS
 
 using System.Collections.Generic;
 using Basis;
@@ -572,7 +572,7 @@ namespace Hai.Basis.CilboxPencil
 
             if (_network.IsLocalOwner())
             {
-                Owner_NewINDX(_beingDrawnPoints, _beingDrawnQuats, _beingDrawnScale);
+                Owner_NewINDX(_beingDrawnPoints, _beingDrawnQuats, _beingDrawnScale, 0);
             }
 
             _beingDrawnPoints.Clear();
