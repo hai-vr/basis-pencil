@@ -1,0 +1,11 @@
+{
+    "name": "dev.hai-vr.basis.pencil",
+    "displayName": "HVR Basis Pencil",
+    "version": "0.0.1",
+    "description": "Pencil for the Basis Framework",
+    "author": "Haï~",
+    "url": "https://docs.hai-vr.dev/docs/basis/pencil",
+    "documentationUrl": "https://docs.hai-vr.dev/docs/basis/pencil",
+    "changelogUrl": "https://docs.hai-vr.dev/docs/basis/pencil",
+    "license": "Apache-2.0"
+}
