@@ -1,6 +1,7 @@
 ﻿using System;
 using System.Collections.Generic;
 using Basis.Network.Core;
+using Basis.Scripts.Networking.Compression;
 using Basis.Scripts.Networking.NetworkedAvatar;
 using UnityEngine;
 using Quaternion = UnityEngine.Quaternion;
@@ -367,7 +368,7 @@ namespace Hai.Basis.CilboxPencil
               + SizeOfInt // Payload Index
               + SizeOfInt // NumberOfPoints (TODO: It should be possible to deduce this from the packet size)
               + SizeOfVector3 * numberOfPoints // Points
-              + SizeOfBadQuaternion * numberOfPoints // Quats
+              + SizeOfCompressedQuaternion * numberOfPoints // Quats
               + SizeOfFloat * numberOfPoints // Scale
             ];
 
@@ -378,9 +379,9 @@ namespace Hai.Basis.CilboxPencil
             for (var i = 0; i < numberOfPoints; i++)
             {
                 WriteVector3(buffer, start + i * SizeOfVector3, points[i]);
-                WriteBadQuaternion(buffer, start + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion, quats[i]);
+                WriteQuaternion(buffer, start + numberOfPoints * SizeOfVector3 + i * SizeOfCompressedQuaternion, quats[i]);
                 // TODO: We could reduce this to a half, we'll worry about this at another time after everywhing works even without optimizing
-                WriteFloat(buffer, start + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat, scale[i]);
+                WriteFloat(buffer, start + numberOfPoints * (SizeOfVector3 + SizeOfCompressedQuaternion) + i * SizeOfFloat, scale[i]);
             }
 
             return buffer;
@@ -408,7 +409,7 @@ namespace Hai.Basis.CilboxPencil
             var numberOfPoints = ReadInt(buffer, 1 + SizeOfInt);
 
             var isScaled = false;
-            var unscaledPacketLength = start + SizeOfVector3 * numberOfPoints + SizeOfBadQuaternion * numberOfPoints;
+            var unscaledPacketLength = start + SizeOfVector3 * numberOfPoints + SizeOfCompressedQuaternion * numberOfPoints;
             if (buffer.Length != unscaledPacketLength)
             {
                 var scaledPacketLength = unscaledPacketLength + SizeOfFloat * numberOfPoints;
@@ -426,9 +427,9 @@ namespace Hai.Basis.CilboxPencil
             for (var i = 0; i < numberOfPoints; i++)
             {
                 var point = ReadVector3(buffer, start + i * SizeOfVector3);
-                var quat = ReadBadQuaternion(buffer, start + numberOfPoints * SizeOfVector3 + i * SizeOfBadQuaternion);
+                var quat = ReadQuaternion(buffer, start + numberOfPoints * SizeOfVector3 + i * SizeOfCompressedQuaternion);
                 var scale = isScaled
-                    ? ReadFloat(buffer, start + numberOfPoints * (SizeOfVector3 + SizeOfBadQuaternion) + i * SizeOfFloat)
+                    ? ReadFloat(buffer, start + numberOfPoints * (SizeOfVector3 + SizeOfCompressedQuaternion) + i * SizeOfFloat)
                     : 1f;
 
                 _decodeNewINDX_Points.Add(point);
@@ -490,17 +491,17 @@ namespace Hai.Basis.CilboxPencil
             return new Vector3(ReadFloat(buffer, offset), ReadFloat(buffer, offset + 4), ReadFloat(buffer, offset + 8));
         }
 
-        // private void WriteQuaternion(byte[] buffer, int offset, Quaternion value)
-        // {
-            // uint compressed = CompressQuaternion(value);
-            // WriteUInt(buffer, offset, compressed);
-        // }
+        private void WriteQuaternion(byte[] buffer, int offset, Quaternion value)
+        {
+            uint compressed = BasisCompression.QuaternionCompressor.CompressQuaternion(ref value);
+            WriteUInt(buffer, offset, compressed);
+        }
 
-        // private Quaternion ReadQuaternion(byte[] buffer, int offset)
-        // {
-            // uint compressed = ReadUInt(buffer, offset);
-            // return DecompressQuaternion(compressed);
-        // }
+        private Quaternion ReadQuaternion(byte[] buffer, int offset)
+        {
+            uint compressed = ReadUInt(buffer, offset);
+            return BasisCompression.QuaternionCompressor.DecompressQuaternion(compressed);
+        }
 
         // FIXME: Quaternion compression is not available to Cilbox, and we can't access the xyzw fields of a quaternion either, so we can't compress this for the time being until an upstream PR is opened.
         private void WriteBadQuaternion(byte[] buffer, int offset, Quaternion value)

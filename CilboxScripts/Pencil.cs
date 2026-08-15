@@ -1,13 +1,8 @@
-﻿#define PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS
-#define BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS
-
-using System.Collections.Generic;
+﻿using System.Collections.Generic;
 using Basis;
 using Basis.Scripts.BasisSdk.Interactions;
 using Basis.Scripts.Device_Management.Devices;
-#if BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS // (AUDIT): API is not accessible by props
 using Basis.Scripts.Drivers;
-#endif
 using UnityEngine;
 
 namespace Hai.Basis.CilboxPencil
@@ -34,7 +29,7 @@ namespace Hai.Basis.CilboxPencil
         private const float PressingOnColliderNormalBackawayDistance = 0.0001f;
 
         // ForcedPerspective mode
-        private const float WorldSpaceEyePokeDistanceThreshold = 0.15f;
+        private const float WorldSpaceEyePokeDistanceThreshold = 0.05f;
         private const int ForcedPerspectiveRaycastMask = ~((1 << 2) | (1 << 3) | (1 << 6) | (1 << 7) | (1 << 8) | (1 << 10) | (1 << 11)); // Same as PressingOnCollider but we allow the two UI layers
         private const int WantsForcePerspective_None = 0;
         private const int WantsForcePerspective_Left = 1;
@@ -176,7 +171,6 @@ namespace Hai.Basis.CilboxPencil
                     }
                 }
 
-#if PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS // (AUDIT): Code sometimes disabled because Raycasts are not allowed on Basis Props as of this time of writing
                 // Detect when the pen is pressing onto to a wall:
                 var raycastPos = tip.position - tip.forward * PressingOnColliderRaycastBackingDistance;
                 if (Physics.Raycast(raycastPos, tip.forward, out var hitInfo, PressingOnColliderRaycastBackingDistance + PressingOnColliderRaycastMagnetismDistance, PressingOnColliderRaycastMask))
@@ -187,10 +181,6 @@ namespace Hai.Basis.CilboxPencil
                     _isPressingOnCollider = true;
                     StartOrContinue(_lastPressingOnColliderPosition, _lastPressingOnColliderRotation);
                 }
-#else
-                if (false)
-                {}
-#endif
                 else
                 {
                     needToUnpressCollider = _isPressingOnCollider;
@@ -228,7 +218,6 @@ namespace Hai.Basis.CilboxPencil
                     {
                         var shootingEyePosition = FetchEyePositionInWorldSpace(_userWantsForcePerspective_None_Left_Right);
                         var forwardVector = (tip.position - shootingEyePosition).normalized;
-#if PENCIL_BASIS_ALLOWS_RAYCASTS_IN_PROPS // (AUDIT): Code sometimes disabled because Raycasts are not allowed on Basis Props as of this time of writing
                         if (Physics.Raycast(tip.position, forwardVector, out var hitInfo, 100, ForcedPerspectiveRaycastMask))
                         {
                             // We're hijacking the lastPressing* variables for the ForcedPerspective mode
@@ -240,7 +229,6 @@ namespace Hai.Basis.CilboxPencil
                             _isPaintingForcedPerspective = true;
                             isForcedPerspectivePass = true;
                         }
-#endif
                     }
 
                     if (!isForcedPerspectivePass && !_isPaintingForcedPerspective)
@@ -729,23 +717,9 @@ namespace Hai.Basis.CilboxPencil
 
         private Vector3 FetchEyePositionInWorldSpace(int wantsForcePerspective)
         {
-#if BASIS_ALLOWS_LOCAL_CAMERA_DRIVER_CAMERA_ACCESS // (AUDIT): API is not accessible by props, needs a shim that works
-            // return BasisLocalCameraDriver.RightEyePosition(); // ????????????? This always returns the same vector? This contradicts the documentation??????
-            // Unity.Mathematics.float3 currentRightEyePosition = BasisEyeTrackingManager.Current.RightEyePosition; // Not working, always returns 0
-            var cam = BasisLocalCameraDriver.CameraInstance;
-            if (cam != null)
-            {
-                if (cam.stereoEnabled)
-                {
-                    var eyeViewMatrix = cam.GetStereoViewMatrix(wantsForcePerspective == WantsForcePerspective_Left ? Camera.StereoscopicEye.Left : Camera.StereoscopicEye.Right);
-                    var eyePositionInWorldSpace = eyeViewMatrix.inverse.MultiplyPoint(Vector3.zero);
-                    return eyePositionInWorldSpace;
-                }
-
-                return cam.transform.position;
-            }
-#endif
-            return Vector3.zero;
+            return wantsForcePerspective == WantsForcePerspective_Left
+                ? BasisLocalCameraDriver.LeftEyeWorldPosition()
+                : BasisLocalCameraDriver.RightEyeWorldPosition();
         }
     }
 }
