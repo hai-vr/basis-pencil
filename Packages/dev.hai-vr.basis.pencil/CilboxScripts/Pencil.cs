@@ -8,6 +8,7 @@ using UnityEngine;
 namespace Hai.Basis.CilboxPencil
 {
     [Cilboxable]
+    [AddComponentMenu("HVR.Basis/Items/HVR Pencil (Cilbox)")]
     public partial class Pencil : MonoBehaviour
     {
         private const float CommitThresholdDistance = 0.005f;
