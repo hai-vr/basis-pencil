@@ -32,4 +32,4 @@ so it may include interpolated lines).
 
 Due to limitations related to the permissions of Cilbox at the time of writing, some of the types are not compressed
 and the size of the packets in general could be greatly reduced, for example, by omitting the scale if all points were to have the same scale,
-by encoding the world-space positions as compressed deltas, and by compressing quaternions.
+and by encoding the world-space positions as compressed deltas

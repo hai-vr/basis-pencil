@@ -1,0 +1,20 @@
+{
+    "name": "HVR.Basis.Pencil",
+    "rootNamespace": "",
+    "references": [
+        "BasisSDK",
+        "Basis Framework",
+        "BasisNetworkCore",
+        "Cilbox",
+        "BasisShims"
+    ],
+    "includePlatforms": [],
+    "excludePlatforms": [],
+    "allowUnsafeCode": false,
+    "overrideReferences": false,
+    "precompiledReferences": [],
+    "autoReferenced": true,
+    "defineConstraints": [],
+    "versionDefines": [],
+    "noEngineReferences": false
+}
