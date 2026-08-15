@@ -20,7 +20,6 @@ namespace Hai.Basis.CilboxPencil
         private const int SizeOfFloat = 4;
         private const int SizeOfVector3 = 3 * SizeOfFloat;
         private const int SizeOfCompressedQuaternion = SizeOfUInt;
-        private const int SizeOfBadQuaternion = 3 * SizeOfFloat;
 
         private const byte Packet_C2O_RequestInitialization = 101;
         private const byte Packet_O2C_NewINDX = 11;
@@ -501,17 +500,6 @@ namespace Hai.Basis.CilboxPencil
         {
             uint compressed = ReadUInt(buffer, offset);
             return BasisCompression.QuaternionCompressor.DecompressQuaternion(compressed);
-        }
-
-        // FIXME: Quaternion compression is not available to Cilbox, and we can't access the xyzw fields of a quaternion either, so we can't compress this for the time being until an upstream PR is opened.
-        private void WriteBadQuaternion(byte[] buffer, int offset, Quaternion value)
-        {
-            WriteVector3(buffer, offset, value.eulerAngles);
-        }
-
-        private Quaternion ReadBadQuaternion(byte[] buffer, int offset)
-        {
-            return Quaternion.Euler(ReadVector3(buffer, offset));
         }
     }
 }
